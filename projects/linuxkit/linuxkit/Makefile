@@ -19,7 +19,7 @@ BINARY_PLATFORMS?=linux/$(BUILDER_PLATFORM_ARCH)
 IMAGE_PLATFORMS?=linux/$(BUILDER_PLATFORM_ARCH)
 USERMODE_HELPER_TARGETS=$(foreach platform,$(IMAGE_PLATFORMS),$(OUTPUT_BIN_DIR)/$(subst /,-,$(platform))/usermode-helper)
 
-IMAGE_NAMES=init ca-certificates firmware rngd sysctl sysfs modprobe dhcpcd openntpd getty
+IMAGE_NAMES=init ca-certificates firmware rngd sysctl sysfs modprobe dhcpcd openntpd getty mkimage-iso-efi-initrd
 
 # we are building these using the upstream dockerfiles for now
 # the plan is to convert these to our standard build process
@@ -41,11 +41,12 @@ MODPROBE_IMAGE_COMPONENT=linuxkit/modprobe
 DHCPCD_IMAGE_COMPONENT=linuxkit/dhcpcd
 OPENNTPD_IMAGE_COMPONENT=linuxkit/openntpd
 GETTY_IMAGE_COMPONENT=linuxkit/getty
+MKIMAGE_ISO_EFI_INITRD_IMAGE_COMPONENT=linuxkit/mkimage-iso-efi-initrd
 
 # when using yq to conver to json 0666 is being parsed as a number and converted to 438
 # replace it back to 0600
 # https://github.com/mikefarah/yq/issues/1634
-MOBY_CONFIG='$(shell yq '.config' $(REPO)/pkg/$(IMAGE_NAME)/build.yml | yq -o=json -I=0 | sed 's/438/"0666"/g')'
+MOBY_CONFIG='$(shell yq '.config' $(REPO)/pkg/$(IMAGE_NAME)/build.yml | yq -o=json -I=0 | sed 's/438/"0666"/g' | sed 's/666/"0666"/g)'
 
 # we need to set IMAGE_BUILD_ARGS here even though its the same as the default. 
 # it is set in Common.mk on the images target (https://github.com/aws/eks-anywhere-build-tooling/blob/8b6d6d66974e881b22e3c9c8ea29adc26f7df5fd/Common.mk#L799)

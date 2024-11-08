@@ -1,4 +1,4 @@
-888fb379ad47f0a4388f7fb1325b94e18b04d2f31ca8ea6338111ee124ae431e  _output/bin/hook/linux-amd64/hook-bootkit
-6661ebff773a62a376cd59492c746588b783bf31f32c85632e4b0d5bfa3bcbeb  _output/bin/hook/linux-amd64/hook-docker
-65be350eed2c9414ae828d861f753febaf688df14f63d6cc76ccee5d0ab8d040  _output/bin/hook/linux-arm64/hook-bootkit
-bbd3f035ffa2e13a95fce878895604adac19752d070a3d4b03c73bbdba43c9f3  _output/bin/hook/linux-arm64/hook-docker
+9da177307ed6a232c08f2a2e8c5c6d3b4038852a44ca9ea9dcce59fc5e268feb  _output/bin/hook/linux-amd64/hook-bootkit
+3cc93226bd17ab1871d7a29a7470f421525269de148bc140220c1bae04dee42b  _output/bin/hook/linux-amd64/hook-docker
+85d6fda58eb151c06fe0315bff217d016f3e5d581bff98ee4a667903f6ffd0ab  _output/bin/hook/linux-arm64/hook-bootkit
+87cdac246eb55f50cec2fa8a61a4eb9d6f6c632c0aaa6b46d9a4db4595a8920f  _output/bin/hook/linux-arm64/hook-docker

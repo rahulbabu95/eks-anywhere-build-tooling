@@ -175,11 +175,11 @@ $(CREATE_HOOK_FILES_PATTERN)-%: $(LINUXKIT_CACHE_FILE) | $$(ENABLE_DOCKER)
 		HOOK_KERNEL_POINT_RELEASE=$(lastword $(subst ., ,$(KERNEL_VERSION))) \
 		HOOK_KERNEL_OCI_VERSION=$(LATEST_TAG)$(IMAGE_TAG_SUFFIX) \
 		HOOK_LK_CONTAINERS_OCI_VERSION=$(LATEST_TAG)$(IMAGE_TAG_SUFFIX) \
+        LINUXKIT_ISO=true \
 		./build.sh build hook-default-$(BUILD_ARCH); \
 	cd ..; \
 	mkdir -p $(OUTPUT_DIR)/hook/$(GIT_TAG); \
-	cp $(REPO)/out/hook/vmlinuz-$* $(OUTPUT_DIR)/hook/$(GIT_TAG)/; \
-	cp $(REPO)/out/hook/initramfs-$* $(OUTPUT_DIR)/hook/$(GIT_TAG)/; \
+    cp $(REPO)/out/hook-efi-initrd.iso $(OUTPUT_DIR)/hook/$(GIT_TAG)/; \
 	mkdir -p $(ARTIFACTS_PATH); \
 	cp -rf $(OUTPUT_DIR)/hook/* $(ARTIFACTS_PATH)
 
