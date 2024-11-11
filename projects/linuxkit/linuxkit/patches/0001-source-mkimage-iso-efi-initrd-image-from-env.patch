@@ -1,0 +1,180 @@
+From 6ce975c8942ddf51179e98fa3828387507608254 Mon Sep 17 00:00:00 2001
+From: Prow Bot <prow@amazonaws.com>
+Date: Sat, 9 Nov 2024 02:55:13 +0000
+Subject: [PATCH 1/4] source mkimage-iso-efi-initrd image from env
+
+Signed-off-by: Prow Bot <prow@amazonaws.com>
+---
+ src/cmd/linuxkit/moby/build/output.go | 45 +++++++++++++++------------
+ 1 file changed, 25 insertions(+), 20 deletions(-)
+
+diff --git a/src/cmd/linuxkit/moby/build/output.go b/src/cmd/linuxkit/moby/build/output.go
+index fbacc8948..036bce003 100644
+--- a/src/cmd/linuxkit/moby/build/output.go
++++ b/src/cmd/linuxkit/moby/build/output.go
+@@ -66,7 +66,8 @@ var outFuns = map[string]func(base string, ir io.Reader, size int, arch string)
+ 			return fmt.Errorf("Error converting to initrd: %v", err)
+ 		}
+ 
+-		err = outputImg(outputImages["iso-efi-initrd"], base+"-efi-initrd.iso", kernel, initrd, cmdline, arch)
++		// For eks-a builds allow build tooling to set this image
++		err = outputImg(os.Getenv("EKS_A_BUILD_ISO_EFI_IMAGE"), base+"-efi-initrd.iso", kernel, initrd, cmdline, arch)
+ 		if err != nil {
+ 			return fmt.Errorf("Error writing iso-efi-initrd output: %v", err)
+ 		}
+@@ -219,10 +220,14 @@ func ensurePrereq(out, cache string) error {
+ 
+ // parseOutputImages parse the raw output image info
+ func parseOutputImages(b []byte) (map[string]string, error) {
+-	var (
+-		m map[string]string
+-	)
++	var m map[string]string
+ 	err := yaml.Unmarshal(b, &m)
++
++	// Eks-a sources it's own images
++	// Allow overriding the mkimage-iso-efi-initrd image for build-tooling to orchestrate.
++	if image, ok := os.LookupEnv("EKS_A_BUILD_ISO_EFI_IMAGE"); ok {
++		m["iso-efi-initrd"] = image
++	}
+ 	return m, err
+ }
+ 
+@@ -291,7 +296,7 @@ func tarInitrdKernel(kernel, initrd []byte, cmdline string) (*bytes.Buffer, erro
+ 	tw := tar.NewWriter(buf)
+ 	hdr := &tar.Header{
+ 		Name:    "kernel",
+-		Mode:    0600,
++		Mode:    0o600,
+ 		Size:    int64(len(kernel)),
+ 		ModTime: defaultModTime,
+ 		Format:  tar.FormatPAX,
+@@ -306,7 +311,7 @@ func tarInitrdKernel(kernel, initrd []byte, cmdline string) (*bytes.Buffer, erro
+ 	}
+ 	hdr = &tar.Header{
+ 		Name:    "initrd.img",
+-		Mode:    0600,
++		Mode:    0o600,
+ 		Size:    int64(len(initrd)),
+ 		ModTime: defaultModTime,
+ 		Format:  tar.FormatPAX,
+@@ -321,7 +326,7 @@ func tarInitrdKernel(kernel, initrd []byte, cmdline string) (*bytes.Buffer, erro
+ 	}
+ 	hdr = &tar.Header{
+ 		Name:    "cmdline",
+-		Mode:    0600,
++		Mode:    0o600,
+ 		Size:    int64(len(cmdline)),
+ 		ModTime: defaultModTime,
+ 		Format:  tar.FormatPAX,
+@@ -387,11 +392,11 @@ func outputKernelInitrd(base string, kernel []byte, initrd []byte, cmdline strin
+ 
+ 	if len(ucode) != 0 {
+ 		log.Infof("  %s ucode+%s %s", base+"-kernel", base+"-initrd.img", base+"-cmdline")
+-		if err := os.WriteFile(base+"-initrd.img", ucode, os.FileMode(0644)); err != nil {
++		if err := os.WriteFile(base+"-initrd.img", ucode, os.FileMode(0o644)); err != nil {
+ 			return err
+ 		}
+ 		if len(initrd) != 0 {
+-			f, err := os.OpenFile(base+"-initrd.img", os.O_APPEND|os.O_WRONLY, 0644)
++			f, err := os.OpenFile(base+"-initrd.img", os.O_APPEND|os.O_WRONLY, 0o644)
+ 			if err != nil {
+ 				return err
+ 			}
+@@ -403,18 +408,18 @@ func outputKernelInitrd(base string, kernel []byte, initrd []byte, cmdline strin
+ 	} else {
+ 		if len(initrd) != 0 {
+ 			log.Infof("  %s %s %s", base+"-kernel", base+"-initrd.img", base+"-cmdline")
+-			if err := os.WriteFile(base+"-initrd.img", initrd, os.FileMode(0644)); err != nil {
++			if err := os.WriteFile(base+"-initrd.img", initrd, os.FileMode(0o644)); err != nil {
+ 				return err
+ 			}
+ 		}
+ 	}
+ 	if len(kernel) != 0 {
+-		if err := os.WriteFile(base+"-kernel", kernel, os.FileMode(0644)); err != nil {
++		if err := os.WriteFile(base+"-kernel", kernel, os.FileMode(0o644)); err != nil {
+ 			return err
+ 		}
+ 	}
+ 	if len(cmdline) != 0 {
+-		return os.WriteFile(base+"-cmdline", []byte(cmdline), os.FileMode(0644))
++		return os.WriteFile(base+"-cmdline", []byte(cmdline), os.FileMode(0o644))
+ 	}
+ 	return nil
+ }
+@@ -431,7 +436,7 @@ func outputKernelInitrdTarball(base string, kernel []byte, initrd []byte, cmdlin
+ 	if len(kernel) != 0 {
+ 		hdr := &tar.Header{
+ 			Name:    "kernel",
+-			Mode:    0644,
++			Mode:    0o644,
+ 			Size:    int64(len(kernel)),
+ 			ModTime: defaultModTime,
+ 			Format:  tar.FormatPAX,
+@@ -446,7 +451,7 @@ func outputKernelInitrdTarball(base string, kernel []byte, initrd []byte, cmdlin
+ 	if len(initrd) != 0 {
+ 		hdr := &tar.Header{
+ 			Name:    "initrd.img",
+-			Mode:    0644,
++			Mode:    0o644,
+ 			Size:    int64(len(initrd)),
+ 			ModTime: defaultModTime,
+ 			Format:  tar.FormatPAX,
+@@ -461,7 +466,7 @@ func outputKernelInitrdTarball(base string, kernel []byte, initrd []byte, cmdlin
+ 	if len(cmdline) != 0 {
+ 		hdr := &tar.Header{
+ 			Name:    "cmdline",
+-			Mode:    0644,
++			Mode:    0o644,
+ 			Size:    int64(len(cmdline)),
+ 			ModTime: defaultModTime,
+ 			Format:  tar.FormatPAX,
+@@ -476,7 +481,7 @@ func outputKernelInitrdTarball(base string, kernel []byte, initrd []byte, cmdlin
+ 	if len(ucode) != 0 {
+ 		hdr := &tar.Header{
+ 			Name:    "ucode.cpio",
+-			Mode:    0644,
++			Mode:    0o644,
+ 			Size:    int64(len(ucode)),
+ 			ModTime: defaultModTime,
+ 			Format:  tar.FormatPAX,
+@@ -515,7 +520,7 @@ func outputKernelSquashFS(image, base string, filesystem io.Reader, arch string)
+ 			if err != nil {
+ 				return err
+ 			}
+-			if err := os.WriteFile(base+"-kernel", kernel, os.FileMode(0644)); err != nil {
++			if err := os.WriteFile(base+"-kernel", kernel, os.FileMode(0o644)); err != nil {
+ 				return err
+ 			}
+ 		case thdr.Name == "boot/cmdline":
+@@ -523,7 +528,7 @@ func outputKernelSquashFS(image, base string, filesystem io.Reader, arch string)
+ 			if err != nil {
+ 				return err
+ 			}
+-			if err := os.WriteFile(base+"-cmdline", cmdline, os.FileMode(0644)); err != nil {
++			if err := os.WriteFile(base+"-cmdline", cmdline, os.FileMode(0o644)); err != nil {
+ 				return err
+ 			}
+ 		case strings.HasPrefix(thdr.Name, "boot/"):
+@@ -574,7 +579,7 @@ func outputKernelISO(image, base string, filesystem io.Reader, arch string) erro
+ 			if err != nil {
+ 				return err
+ 			}
+-			if err := os.WriteFile(base+"-kernel", kernel, os.FileMode(0644)); err != nil {
++			if err := os.WriteFile(base+"-kernel", kernel, os.FileMode(0o644)); err != nil {
+ 				return err
+ 			}
+ 		case thdr.Name == "boot/cmdline":
+@@ -582,7 +587,7 @@ func outputKernelISO(image, base string, filesystem io.Reader, arch string) erro
+ 			if err != nil {
+ 				return err
+ 			}
+-			if err := os.WriteFile(base+"-cmdline", cmdline, os.FileMode(0644)); err != nil {
++			if err := os.WriteFile(base+"-cmdline", cmdline, os.FileMode(0o644)); err != nil {
+ 				return err
+ 			}
+ 		case strings.HasPrefix(thdr.Name, "boot/"):
+-- 
+2.40.1
+

@@ -28,8 +28,13 @@ IMAGE_NAMES=init ca-certificates firmware rngd sysctl sysfs modprobe dhcpcd open
 # to the standard combine-images dockerfile
 # If we setup our override in this Makefile at the target it does not allow the combine-images
 # to override it
-IMAGES_USING_UPSTREAM_DOCKERFILES=ca-certificates dhcpcd firmware getty init modprobe openntpd
-DOCKERFILE_FOLDER=$(if $(filter $(IMAGE_NAME),$(IMAGES_USING_UPSTREAM_DOCKERFILES)),$(REPO)/pkg/$(IMAGE_NAME),./docker/linux/$(IMAGE_NAME))
+# edge cases:
+# - mkimage-iso-efi-initrd is a different folder in linuxkit repo (linuxkit/tools/mkimage-iso-efi-initrd vs linuxkit/pkg/*)
+IMAGES_USING_UPSTREAM_DOCKERFILES=ca-certificates dhcpcd firmware getty init modprobe openntpd mkimage-iso-efi-initrd
+DOCKERFILE_FOLDER=$(strip $(if $(filter $(IMAGE_NAME),$(IMAGES_USING_UPSTREAM_DOCKERFILES)),\
+	$(if $(filter mkimage-iso-efi-initrd,$(IMAGE_NAME)),$(REPO)/tools/$(IMAGE_NAME),$(REPO)/pkg/$(IMAGE_NAME)),\
+	./docker/linux/$(IMAGE_NAME)))
+
 
 INIT_IMAGE_COMPONENT=linuxkit/init
 CA_CERTIFICATES_IMAGE_COMPONENT=linuxkit/ca-certificates
@@ -46,7 +51,7 @@ MKIMAGE_ISO_EFI_INITRD_IMAGE_COMPONENT=linuxkit/mkimage-iso-efi-initrd
 # when using yq to conver to json 0666 is being parsed as a number and converted to 438
 # replace it back to 0600
 # https://github.com/mikefarah/yq/issues/1634
-MOBY_CONFIG='$(shell yq '.config' $(REPO)/pkg/$(IMAGE_NAME)/build.yml | yq -o=json -I=0 | sed 's/438/"0666"/g' | sed 's/666/"0666"/g)'
+MOBY_CONFIG='$(shell yq '.config' $(REPO)/pkg/$(IMAGE_NAME)/build.yml | yq -o=json -I=0 | sed 's/438/"0666"/g' | sed 's/666/"0666"/g')'
 
 # we need to set IMAGE_BUILD_ARGS here even though its the same as the default. 
 # it is set in Common.mk on the images target (https://github.com/aws/eks-anywhere-build-tooling/blob/8b6d6d66974e881b22e3c9c8ea29adc26f7df5fd/Common.mk#L799)
@@ -80,7 +85,7 @@ include $(BASE_DIRECTORY)/Common.mk
 # build usermode-helper with binary targets
 validate-checksums: $(USERMODE_HELPER_TARGETS)
 
-dhcpcd/images/% getty/images/% modprobe/images/% openntpd/images/% rngd/images/% sysctl/images/% sysfs/images/%: IMAGE_BUILD_ARGS+=MOBY_CONFIG
+dhcpcd/images/% getty/images/% modprobe/images/% openntpd/images/% rngd/images/% sysctl/images/% sysfs/images/% mkimage-iso-efi-initrd/images/%: IMAGE_BUILD_ARGS+=MOBY_CONFIG
 
 $(GATHER_LICENSES_TARGETS): $(FIX_LICENSES_SUB_MOD_TARGETS) $(FIX_LICENSES_HYPERKIT_TARGE)
 
@@ -93,6 +98,8 @@ $(OUTPUT_BIN_DIR)/linux-%/rngd: EXTRA_GOBUILD_FLAGS=-tags netgo,osusergo,static_
 $(OUTPUT_DIR)/rngd/attribution/go-license.csv: CGO_CREATE_BINARIES=true
 
 ca-certificates/images/% dhcpcd/images/% firmware/images/% getty/images/% modprobe/images/% openntpd/images/%: IMAGE_CONTEXT_DIR=$(REPO)/pkg/$(IMAGE_NAME)
+# mkimage-iso-efi-initrd is in separate folder than the above images
+mkimage-iso-efi-initrd/images/%: IMAGE_CONTEXT_DIR=$(REPO)/tools/$(IMAGE_NAME)
 
 $(OUTPUT_BIN_DIR)/%/usermode-helper: MAKEFLAGS=
 $(OUTPUT_BIN_DIR)/%/usermode-helper: PLATFORM=$(subst -,/,$*)

@@ -16,6 +16,7 @@ HOOK_CONTAINERD_IMAGE_COMPONENT=tinkerbell/hook-containerd
 HOOK_EMBEDDED_IMAGE_COMPONENT=tinkerbell/hook-embedded
 HOOK_IP_IMAGE_COMPONENT=tinkerbell/hook-ip
 HOOK_MDEV_IMAGE_COMPONENT=tinkerbell/hook-mdev
+MKIMAGE_ISO_EFI_INITRD_IMAGE_COMPONENT=linuxkit/mkimage-iso-efi-initrd
 
 IMAGE_NAMES=hook-bootkit hook-docker hook-runc hook-containerd kernel hook-ip hook-mdev hook-dind hook-embedded
 
@@ -62,7 +63,6 @@ KERNEL_MAJOR_MINOR=$(subst $(SPACE),.,$(wordlist 1,2,$(subst ., ,$(KERNEL_VERSIO
 DEFCONFIG=generic-$(basename $(KERNEL_VERSION)).y
 
 KERNEL_ARCH=$(if $(findstring amd64,$(BUILDER_PLATFORM_ARCH)),x86_64,aarch64)
-EKSA_DEFCONFIG=$(DEFCONFIG)-$(KERNEL_ARCH)-eksa
 USER_DEFCONFIG=$(DEFCONFIG)-$(KERNEL_ARCH)
 KERNEL_CONFIG_HOST_PATH=$(MAKE_ROOT)/$(OUTPUT_DIR)/kernel-config
 
@@ -72,6 +72,8 @@ EMBEDDED_IMAGES=$(foreach platform,$(HOOK_PLATFORMS),$(OUTPUT_DIR)/hook-embedded
 LINUXKIT_VERSION=$(shell cat $(MAKE_ROOT)/../../linuxkit/linuxkit/GIT_TAG | cut -c2-)
 LINUXKIT_CACHE_FILE=$(REPO)/cache/linuxkit-linux-$(BUILDER_PLATFORM_ARCH)-$(LINUXKIT_VERSION)
 LINUXKIT_IMAGE_REPO?=$(IMAGE_REPO)
+
+# EKS_A_BUILD_ISO_EFI_IMAGE=public.ecr.aws/b2a6f0e3/linuxkit/mkimage-iso-efi-initrd:v1.5.2-32fd95dbb42c65444eed3577002c5e2f61d9e555
 
 # we need to set IMAGE_BUILD_ARGS here even though its the same as the default. 
 # it is set in Common.mk on the images target (https://github.com/aws/eks-anywhere-build-tooling/blob/8b6d6d66974e881b22e3c9c8ea29adc26f7df5fd/Common.mk#L799)
@@ -175,6 +177,7 @@ $(CREATE_HOOK_FILES_PATTERN)-%: $(LINUXKIT_CACHE_FILE) | $$(ENABLE_DOCKER)
 		HOOK_KERNEL_POINT_RELEASE=$(lastword $(subst ., ,$(KERNEL_VERSION))) \
 		HOOK_KERNEL_OCI_VERSION=$(LATEST_TAG)$(IMAGE_TAG_SUFFIX) \
 		HOOK_LK_CONTAINERS_OCI_VERSION=$(LATEST_TAG)$(IMAGE_TAG_SUFFIX) \
+		EKS_A_BUILD_ISO_EFI_IMAGE=$(IMAGE_REPO)/$(MKIMAGE_ISO_EFI_INITRD_IMAGE_COMPONENT):$(LATEST) \
         LINUXKIT_ISO=true \
 		./build.sh build hook-default-$(BUILD_ARCH); \
 	cd ..; \
