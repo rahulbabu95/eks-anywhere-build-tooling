@@ -1,0 +1,385 @@
+package fixpatches
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/aws/eks-anywhere-build-tooling/tools/version-tracker/pkg/types"
+	"github.com/aws/eks-anywhere-build-tooling/tools/version-tracker/pkg/util/logger"
+)
+
+// ExtractPatchContext builds context for LLM from .rej files for a specific patch.
+func ExtractPatchContext(rejFiles []string, patchFile string, projectPath string, attempt int) (*types.PatchContext, error) {
+	if len(rejFiles) == 0 {
+		return nil, fmt.Errorf("no rejection files provided")
+	}
+
+	if patchFile == "" {
+		return nil, fmt.Errorf("patch file not specified")
+	}
+
+	ctx := &types.PatchContext{
+		FailedHunks:      make([]types.FailedHunk, 0),
+		CurrentFileState: make(map[string]string),
+		PreviousAttempts: make([]string, 0),
+	}
+
+	// Extract project name from path (e.g., "projects/aquasecurity/trivy" -> "aquasecurity/trivy")
+	pathParts := strings.Split(projectPath, string(filepath.Separator))
+	if len(pathParts) >= 2 {
+		ctx.ProjectName = filepath.Join(pathParts[len(pathParts)-2], pathParts[len(pathParts)-1])
+	}
+
+	logger.Info("Extracting patch context", "patch_file", filepath.Base(patchFile), "rej_files", len(rejFiles))
+
+	// Read and parse the specified patch file
+	patchContent, err := os.ReadFile(patchFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading patch file %s: %v", patchFile, err)
+	}
+
+	ctx.OriginalPatch = string(patchContent)
+
+	// Extract patch metadata from headers
+	if err := extractPatchMetadata(ctx, string(patchContent)); err != nil {
+		logger.Info("Warning: failed to extract patch metadata", "error", err)
+		// Continue anyway - metadata is helpful but not critical
+	}
+
+	// Parse each .rej file
+	for i, rejFile := range rejFiles {
+		logger.Info("Parsing rejection file", "file", rejFile, "index", i+1)
+
+		hunks, err := parseRejectionFile(rejFile, projectPath)
+		if err != nil {
+			logger.Info("Warning: failed to parse rejection file", "file", rejFile, "error", err)
+			continue
+		}
+
+		ctx.FailedHunks = append(ctx.FailedHunks, hunks...)
+	}
+
+	if len(ctx.FailedHunks) == 0 {
+		return nil, fmt.Errorf("no failed hunks extracted from rejection files")
+	}
+
+	// Extract context from current files for each failed hunk
+	for i := range ctx.FailedHunks {
+		hunk := &ctx.FailedHunks[i]
+		context, err := extractFileContext(hunk.FilePath, hunk.LineNumber, projectPath)
+		if err != nil {
+			logger.Info("Warning: failed to extract file context", "file", hunk.FilePath, "error", err)
+			hunk.Context = fmt.Sprintf("(Unable to read file context: %v)", err)
+		} else {
+			hunk.Context = context
+		}
+	}
+
+	// Estimate token count
+	ctx.TokenCount = estimateTokenCount(ctx)
+
+	logger.Info("Context extraction complete",
+		"hunks", len(ctx.FailedHunks),
+		"estimated_tokens", ctx.TokenCount)
+
+	return ctx, nil
+}
+
+// extractPatchMetadata extracts From, Date, and Subject from patch headers.
+func extractPatchMetadata(ctx *types.PatchContext, patchContent string) error {
+	scanner := bufio.NewScanner(strings.NewReader(patchContent))
+
+	// Regex patterns for patch headers
+	fromPattern := regexp.MustCompile(`^From:\s*(.+)$`)
+	datePattern := regexp.MustCompile(`^Date:\s*(.+)$`)
+	subjectPattern := regexp.MustCompile(`^Subject:\s*(.+)$`)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Stop at the first diff marker
+		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "diff --git") {
+			break
+		}
+
+		if match := fromPattern.FindStringSubmatch(line); match != nil {
+			ctx.PatchAuthor = match[1]
+		} else if match := datePattern.FindStringSubmatch(line); match != nil {
+			ctx.PatchDate = match[1]
+		} else if match := subjectPattern.FindStringSubmatch(line); match != nil {
+			ctx.PatchSubject = match[1]
+			// Extract intent from subject (remove [PATCH] prefix if present)
+			subject := strings.TrimSpace(match[1])
+			subject = strings.TrimPrefix(subject, "[PATCH]")
+			subject = strings.TrimSpace(subject)
+			ctx.PatchIntent = subject
+		}
+	}
+
+	if ctx.PatchAuthor == "" || ctx.PatchDate == "" || ctx.PatchSubject == "" {
+		return fmt.Errorf("incomplete patch metadata: author=%q, date=%q, subject=%q",
+			ctx.PatchAuthor, ctx.PatchDate, ctx.PatchSubject)
+	}
+
+	return nil
+}
+
+// parseRejectionFile parses a .rej file and extracts failed hunks.
+func parseRejectionFile(rejFile string, projectPath string) ([]types.FailedHunk, error) {
+	content, err := os.ReadFile(rejFile)
+	if err != nil {
+		return nil, fmt.Errorf("reading rejection file: %v", err)
+	}
+
+	// Determine the original file path from .rej file
+	// .rej files are named like "go.mod.rej" and are in the same directory as the original file
+	filePath := strings.TrimSuffix(rejFile, ".rej")
+
+	hunks := make([]types.FailedHunk, 0)
+	lines := strings.Split(string(content), "\n")
+
+	var currentHunk *types.FailedHunk
+	hunkIndex := 0
+
+	for i, line := range lines {
+		// Detect hunk header: @@ -line,count +line,count @@
+		if strings.HasPrefix(line, "@@") {
+			// Save previous hunk if exists
+			if currentHunk != nil {
+				hunks = append(hunks, *currentHunk)
+			}
+
+			// Start new hunk
+			hunkIndex++
+			currentHunk = &types.FailedHunk{
+				FilePath:      filePath,
+				HunkIndex:     hunkIndex,
+				OriginalLines: make([]string, 0),
+			}
+
+			// Extract line number from hunk header
+			// Format: @@ -old_start,old_count +new_start,new_count @@
+			lineNumPattern := regexp.MustCompile(`@@\s+-(\d+)`)
+			if match := lineNumPattern.FindStringSubmatch(line); match != nil {
+				if lineNum, err := fmt.Sscanf(match[1], "%d", &currentHunk.LineNumber); err == nil {
+					_ = lineNum
+				}
+			}
+
+			currentHunk.OriginalLines = append(currentHunk.OriginalLines, line)
+		} else if currentHunk != nil {
+			// Add line to current hunk
+			currentHunk.OriginalLines = append(currentHunk.OriginalLines, line)
+		} else if i == 0 {
+			// First line might be a header comment, skip it
+			continue
+		}
+	}
+
+	// Save last hunk
+	if currentHunk != nil {
+		hunks = append(hunks, *currentHunk)
+	}
+
+	return hunks, nil
+}
+
+// extractFileContext reads ±50 lines around the conflict point in the current file.
+func extractFileContext(filePath string, lineNumber int, projectPath string) (string, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("reading file: %v", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	totalLines := len(lines)
+
+	// Calculate context window (±50 lines)
+	contextWindow := 50
+	startLine := lineNumber - contextWindow
+	if startLine < 0 {
+		startLine = 0
+	}
+
+	endLine := lineNumber + contextWindow
+	if endLine > totalLines {
+		endLine = totalLines
+	}
+
+	// Extract context lines
+	extractedLines := lines[startLine:endLine]
+	context := strings.Join(extractedLines, "\n")
+
+	// Add line number markers for clarity
+	result := fmt.Sprintf("Lines %d-%d of %s:\n%s", startLine+1, endLine, filepath.Base(filePath), context)
+
+	return result, nil
+}
+
+// estimateTokenCount provides a rough estimate of token usage.
+// Rule of thumb: ~4 characters per token for English text.
+func estimateTokenCount(ctx *types.PatchContext) int {
+	totalChars := 0
+
+	// Count original patch
+	totalChars += len(ctx.OriginalPatch)
+
+	// Count failed hunks
+	for _, hunk := range ctx.FailedHunks {
+		for _, line := range hunk.OriginalLines {
+			totalChars += len(line)
+		}
+		totalChars += len(hunk.Context)
+	}
+
+	// Count build error if present
+	totalChars += len(ctx.BuildError)
+
+	// Count previous attempts
+	for _, attempt := range ctx.PreviousAttempts {
+		totalChars += len(attempt)
+	}
+
+	// Estimate tokens (4 chars per token)
+	tokens := totalChars / 4
+
+	// Add overhead for prompt structure (~1000 tokens)
+	tokens += 1000
+
+	return tokens
+}
+
+// PruneContext reduces context size if it exceeds token limits.
+// This is critical for staying within Claude's context window.
+func PruneContext(ctx *types.PatchContext, maxTokens int) error {
+	logger.Info("Pruning context", "current_tokens", ctx.TokenCount, "max_tokens", maxTokens)
+
+	if ctx.TokenCount <= maxTokens {
+		logger.Info("Context within limits, no pruning needed")
+		return nil
+	}
+
+	// Strategy: Prioritize most relevant context
+	// 1. Keep patch metadata (small, critical)
+	// 2. Keep failed hunks (essential)
+	// 3. Reduce file context (can be trimmed)
+	// 4. Reduce original patch (keep only relevant sections)
+	// 5. Reduce previous attempts (keep only last 2)
+
+	// Step 1: Reduce file context from ±50 lines to ±25 lines
+	if ctx.TokenCount > maxTokens {
+		logger.Info("Reducing file context window")
+		for i := range ctx.FailedHunks {
+			hunk := &ctx.FailedHunks[i]
+			// Re-extract with smaller window
+			context, err := extractFileContextWithWindow(hunk.FilePath, hunk.LineNumber, 25)
+			if err != nil {
+				logger.Info("Warning: failed to re-extract context", "file", hunk.FilePath, "error", err)
+			} else {
+				hunk.Context = context
+			}
+		}
+		ctx.TokenCount = estimateTokenCount(ctx)
+		logger.Info("After reducing file context", "tokens", ctx.TokenCount)
+	}
+
+	// Step 2: Further reduce file context to ±10 lines if still too large
+	if ctx.TokenCount > maxTokens {
+		logger.Info("Further reducing file context window")
+		for i := range ctx.FailedHunks {
+			hunk := &ctx.FailedHunks[i]
+			context, err := extractFileContextWithWindow(hunk.FilePath, hunk.LineNumber, 10)
+			if err != nil {
+				logger.Info("Warning: failed to re-extract context", "file", hunk.FilePath, "error", err)
+			} else {
+				hunk.Context = context
+			}
+		}
+		ctx.TokenCount = estimateTokenCount(ctx)
+		logger.Info("After further reducing file context", "tokens", ctx.TokenCount)
+	}
+
+	// Step 3: Trim original patch to only include relevant sections
+	if ctx.TokenCount > maxTokens {
+		logger.Info("Trimming original patch")
+		// Keep only the diff sections, remove commit message details
+		lines := strings.Split(ctx.OriginalPatch, "\n")
+		var trimmedLines []string
+		inDiff := false
+		for _, line := range lines {
+			if strings.HasPrefix(line, "diff --git") || strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "@@") {
+				inDiff = true
+			}
+			if inDiff {
+				trimmedLines = append(trimmedLines, line)
+			}
+		}
+		if len(trimmedLines) > 0 {
+			ctx.OriginalPatch = strings.Join(trimmedLines, "\n")
+		}
+		ctx.TokenCount = estimateTokenCount(ctx)
+		logger.Info("After trimming original patch", "tokens", ctx.TokenCount)
+	}
+
+	// Step 4: Keep only last 2 previous attempts
+	if ctx.TokenCount > maxTokens && len(ctx.PreviousAttempts) > 2 {
+		logger.Info("Reducing previous attempts history")
+		ctx.PreviousAttempts = ctx.PreviousAttempts[len(ctx.PreviousAttempts)-2:]
+		ctx.TokenCount = estimateTokenCount(ctx)
+		logger.Info("After reducing previous attempts", "tokens", ctx.TokenCount)
+	}
+
+	// Step 5: Truncate build error to last 200 lines if still too large
+	if ctx.TokenCount > maxTokens && len(ctx.BuildError) > 0 {
+		logger.Info("Truncating build error")
+		lines := strings.Split(ctx.BuildError, "\n")
+		if len(lines) > 200 {
+			ctx.BuildError = strings.Join(lines[len(lines)-200:], "\n")
+		}
+		ctx.TokenCount = estimateTokenCount(ctx)
+		logger.Info("After truncating build error", "tokens", ctx.TokenCount)
+	}
+
+	// Final check
+	if ctx.TokenCount > maxTokens {
+		return fmt.Errorf("unable to prune context below %d tokens (current: %d)", maxTokens, ctx.TokenCount)
+	}
+
+	logger.Info("Context pruning complete", "final_tokens", ctx.TokenCount)
+	return nil
+}
+
+// extractFileContextWithWindow reads a specific number of lines around the conflict point.
+func extractFileContextWithWindow(filePath string, lineNumber int, windowSize int) (string, error) {
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("reading file: %v", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	totalLines := len(lines)
+
+	// Calculate context window
+	startLine := lineNumber - windowSize
+	if startLine < 0 {
+		startLine = 0
+	}
+
+	endLine := lineNumber + windowSize
+	if endLine > totalLines {
+		endLine = totalLines
+	}
+
+	// Extract context lines
+	extractedLines := lines[startLine:endLine]
+	context := strings.Join(extractedLines, "\n")
+
+	// Add line number markers for clarity
+	result := fmt.Sprintf("Lines %d-%d of %s:\n%s", startLine+1, endLine, filepath.Base(filePath), context)
+
+	return result, nil
+}
