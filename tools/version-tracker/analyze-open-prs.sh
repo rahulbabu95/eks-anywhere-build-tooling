@@ -36,8 +36,17 @@ for ((i=0; i<$PR_COUNT; i++)); do
   if [[ "$title" =~ Bump[[:space:]]([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+) ]]; then
     project="${BASH_REMATCH[1]}"
     
-    # Check if project exists locally
-    project_path="../../projects/$project"
+    # Check if project exists locally (handle both running from tools/version-tracker and from repo root)
+    if [ -d "projects/$project/patches" ]; then
+      project_path="projects/$project"
+    elif [ -d "../../projects/$project/patches" ]; then
+      project_path="../../projects/$project"
+    elif [ -d "test/eks-anywhere-build-tooling/projects/$project/patches" ]; then
+      project_path="test/eks-anywhere-build-tooling/projects/$project"
+    else
+      continue
+    fi
+    
     if [ -d "$project_path/patches" ]; then
       # Check for bot comments indicating patch failure (get first 30 lines of comment)
       has_failure=$(curl -s "https://api.github.com/repos/aws/eks-anywhere-build-tooling/issues/$pr_num/comments" | \

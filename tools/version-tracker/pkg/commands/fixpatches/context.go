@@ -13,7 +13,7 @@ import (
 )
 
 // ExtractPatchContext builds context for LLM from .rej files for a specific patch.
-func ExtractPatchContext(rejFiles []string, patchFile string, projectPath string, attempt int) (*types.PatchContext, error) {
+func ExtractPatchContext(rejFiles []string, patchFile string, projectPath string, attempt int, patchResult *types.PatchApplicationResult) (*types.PatchContext, error) {
 	if len(rejFiles) == 0 {
 		return nil, fmt.Errorf("no rejection files provided")
 	}
@@ -23,9 +23,11 @@ func ExtractPatchContext(rejFiles []string, patchFile string, projectPath string
 	}
 
 	ctx := &types.PatchContext{
-		FailedHunks:      make([]types.FailedHunk, 0),
-		CurrentFileState: make(map[string]string),
-		PreviousAttempts: make([]string, 0),
+		FailedHunks:       make([]types.FailedHunk, 0),
+		CurrentFileState:  make(map[string]string),
+		PreviousAttempts:  make([]string, 0),
+		ApplicationResult: patchResult,
+		AllFileContexts:   make(map[string]string),
 	}
 
 	// Extract project name from path (e.g., "projects/aquasecurity/trivy" -> "aquasecurity/trivy")
@@ -43,6 +45,67 @@ func ExtractPatchContext(rejFiles []string, patchFile string, projectPath string
 	}
 
 	ctx.OriginalPatch = string(patchContent)
+
+	// NEW: Parse patch to find all files and extract context for each
+	patchFiles, err := parsePatchFiles(string(patchContent))
+	if err != nil {
+		logger.Info("Warning: could not parse patch files", "error", err)
+	} else {
+		logger.Info("Parsed patch files", "count", len(patchFiles))
+
+		// OPTIMIZATION: Only extract context for files that actually failed
+		// Clean files don't need full context - they'll be copied from original patch
+		failedFileMap := make(map[string]bool)
+		for _, rejFile := range rejFiles {
+			// Extract base filename from .rej file path
+			baseName := filepath.Base(strings.TrimSuffix(rejFile, ".rej"))
+			failedFileMap[baseName] = true
+		}
+
+		// Filter to only failed files
+		failedFiles := make([]PatchFile, 0)
+		for _, file := range patchFiles {
+			baseName := filepath.Base(file.Path)
+			if failedFileMap[baseName] {
+				failedFiles = append(failedFiles, file)
+			}
+		}
+
+		logger.Info("Categorized patch files",
+			"total", len(patchFiles),
+			"failed", len(failedFiles),
+			"clean", len(patchFiles)-len(failedFiles))
+
+		// Use PRISTINE content from patchResult if available
+		// This is critical: pristine content was captured BEFORE git apply modified the files
+		if patchResult != nil && len(patchResult.PristineContent) > 0 {
+			logger.Info("Using pristine content from before patch application", "files", len(patchResult.PristineContent))
+			// Extract context ONLY for failed files to save tokens
+			allFileContexts := extractContextFromPristine(failedFiles, patchResult.PristineContent)
+			ctx.AllFileContexts = allFileContexts
+			logger.Info("Extracted context from pristine files (failed only)",
+				"count", len(allFileContexts),
+				"token_savings_estimate", (len(patchFiles)-len(failedFiles))*700)
+		} else {
+			// Fallback: read from current files (may be modified)
+			logger.Info("Warning: no pristine content available, reading from current files")
+			// Determine the repository path from the .rej files
+			var repoPath string
+			if len(rejFiles) > 0 {
+				rejFileDir := filepath.Dir(rejFiles[0])
+				repoPath = rejFileDir
+				logger.Info("Determined repository path from .rej file", "repo_path", repoPath)
+			} else {
+				repoPath = projectPath
+				logger.Info("No .rej files to determine repo path, using project path", "repo_path", repoPath)
+			}
+
+			// Extract context ONLY for failed files
+			allFileContexts := extractContextForAllFiles(failedFiles, repoPath)
+			ctx.AllFileContexts = allFileContexts
+			logger.Info("Extracted context for failed files only", "count", len(allFileContexts))
+		}
+	}
 
 	// Extract patch metadata from headers
 	if err := extractPatchMetadata(ctx, string(patchContent)); err != nil {
@@ -77,6 +140,12 @@ func ExtractPatchContext(rejFiles []string, patchFile string, projectPath string
 		} else {
 			hunk.Context = context
 		}
+
+		// Extract expected vs actual comparison
+		if err := extractExpectedVsActual(hunk); err != nil {
+			logger.Info("Warning: failed to extract expected vs actual comparison", "file", hunk.FilePath, "error", err)
+			// Continue anyway - this is supplementary information
+		}
 	}
 
 	// Estimate token count
@@ -98,6 +167,7 @@ func extractPatchMetadata(ctx *types.PatchContext, patchContent string) error {
 	datePattern := regexp.MustCompile(`^Date:\s*(.+)$`)
 	subjectPattern := regexp.MustCompile(`^Subject:\s*(.+)$`)
 
+	var inSubject bool
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -108,16 +178,28 @@ func extractPatchMetadata(ctx *types.PatchContext, patchContent string) error {
 
 		if match := fromPattern.FindStringSubmatch(line); match != nil {
 			ctx.PatchAuthor = match[1]
+			inSubject = false
 		} else if match := datePattern.FindStringSubmatch(line); match != nil {
 			ctx.PatchDate = match[1]
+			inSubject = false
 		} else if match := subjectPattern.FindStringSubmatch(line); match != nil {
 			ctx.PatchSubject = match[1]
-			// Extract intent from subject (remove [PATCH] prefix if present)
-			subject := strings.TrimSpace(match[1])
-			subject = strings.TrimPrefix(subject, "[PATCH]")
-			subject = strings.TrimSpace(subject)
-			ctx.PatchIntent = subject
+			inSubject = true
+		} else if inSubject && strings.HasPrefix(line, " ") {
+			// Continuation of Subject line (starts with space)
+			ctx.PatchSubject += "\n" + line
+		} else if inSubject && line == "" {
+			// Empty line marks end of Subject
+			inSubject = false
 		}
+	}
+
+	// Extract intent from complete subject (remove [PATCH] prefix if present)
+	if ctx.PatchSubject != "" {
+		subject := strings.TrimSpace(ctx.PatchSubject)
+		subject = strings.TrimPrefix(subject, "[PATCH]")
+		subject = strings.TrimSpace(subject)
+		ctx.PatchIntent = subject
 	}
 
 	if ctx.PatchAuthor == "" || ctx.PatchDate == "" || ctx.PatchSubject == "" {
@@ -234,6 +316,11 @@ func estimateTokenCount(ctx *types.PatchContext) int {
 			totalChars += len(line)
 		}
 		totalChars += len(hunk.Context)
+	}
+
+	// Count all file contexts
+	for _, context := range ctx.AllFileContexts {
+		totalChars += len(context)
 	}
 
 	// Count build error if present
@@ -382,4 +469,286 @@ func extractFileContextWithWindow(filePath string, lineNumber int, windowSize in
 	result := fmt.Sprintf("Lines %d-%d of %s:\n%s", startLine+1, endLine, filepath.Base(filePath), context)
 
 	return result, nil
+}
+
+// extractExpectedVsActual extracts what the patch expects vs what's actually in the file.
+// This helps the LLM understand why the patch failed (whitespace, line shifts, content changes).
+func extractExpectedVsActual(hunk *types.FailedHunk) error {
+	// Parse the .rej file content to extract expected context lines
+	// Context lines in unified diff format start with a space
+	// Lines to be removed start with '-'
+	// Lines to be added start with '+'
+
+	expectedLines := make([]string, 0)
+	for _, line := range hunk.OriginalLines {
+		// Skip hunk header
+		if strings.HasPrefix(line, "@@") {
+			continue
+		}
+		// Context lines (what the patch expects to find) start with space or are removal lines
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '-') {
+			// Remove the diff marker to get the actual line content
+			if len(line) > 1 {
+				expectedLines = append(expectedLines, line[1:])
+			} else {
+				expectedLines = append(expectedLines, "")
+			}
+		}
+	}
+
+	hunk.ExpectedContext = expectedLines
+
+	// Read the actual file content at the target location
+	content, err := os.ReadFile(hunk.FilePath)
+	if err != nil {
+		return fmt.Errorf("reading file: %v", err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+
+	// Extract actual lines around the target location
+	// Use a window that matches the expected context size
+	contextSize := len(expectedLines)
+	if contextSize == 0 {
+		contextSize = 10 // Default fallback
+	}
+
+	startLine := hunk.LineNumber - 1 // Convert to 0-based index
+	if startLine < 0 {
+		startLine = 0
+	}
+
+	endLine := startLine + contextSize
+	if endLine > len(lines) {
+		endLine = len(lines)
+	}
+
+	// Also check a few lines before in case line numbers shifted
+	searchStart := startLine - 5
+	if searchStart < 0 {
+		searchStart = 0
+	}
+
+	actualLines := make([]string, 0)
+	if startLine < len(lines) {
+		actualLines = lines[startLine:endLine]
+	}
+
+	hunk.ActualContext = actualLines
+
+	// Identify specific differences
+	differences := make([]string, 0)
+
+	// Compare line by line
+	maxLen := len(expectedLines)
+	if len(actualLines) > maxLen {
+		maxLen = len(actualLines)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var expected, actual string
+		if i < len(expectedLines) {
+			expected = expectedLines[i]
+		}
+		if i < len(actualLines) {
+			actual = actualLines[i]
+		}
+
+		if expected != actual {
+			// Check for whitespace-only differences
+			if strings.TrimSpace(expected) == strings.TrimSpace(actual) {
+				if expected == "" && actual != "" {
+					differences = append(differences, fmt.Sprintf("Line %d: Patch expects blank line, but file has: %q", i+1, actual))
+				} else if expected != "" && actual == "" {
+					differences = append(differences, fmt.Sprintf("Line %d: Patch expects %q, but file has blank line", i+1, expected))
+				} else {
+					differences = append(differences, fmt.Sprintf("Line %d: Whitespace difference (content matches)", i+1))
+				}
+			} else {
+				// Content difference
+				if expected == "" {
+					differences = append(differences, fmt.Sprintf("Line %d: Patch expects blank line, file has: %q", i+1, actual))
+				} else if actual == "" {
+					differences = append(differences, fmt.Sprintf("Line %d: File has blank line, patch expects: %q", i+1, expected))
+				} else {
+					differences = append(differences, fmt.Sprintf("Line %d: Content differs\n  Expected: %q\n  Actual:   %q", i+1, expected, actual))
+				}
+			}
+		}
+	}
+
+	// Check for line count mismatch
+	if len(expectedLines) != len(actualLines) {
+		differences = append(differences, fmt.Sprintf("Line count mismatch: patch expects %d lines, file has %d lines", len(expectedLines), len(actualLines)))
+	}
+
+	hunk.Differences = differences
+
+	logger.Info("Extracted expected vs actual comparison",
+		"file", filepath.Base(hunk.FilePath),
+		"expected_lines", len(expectedLines),
+		"actual_lines", len(actualLines),
+		"differences", len(differences))
+
+	return nil
+}
+
+// PatchFile represents a file being modified in a patch.
+type PatchFile struct {
+	Path       string
+	LineRanges []LineRange // Lines being changed
+}
+
+// LineRange represents a range of lines in a file.
+type LineRange struct {
+	Start int
+	End   int
+}
+
+// parsePatchFiles extracts all files and their changed line ranges from a patch.
+func parsePatchFiles(patchContent string) ([]PatchFile, error) {
+	files := make([]PatchFile, 0)
+
+	scanner := bufio.NewScanner(strings.NewReader(patchContent))
+	var currentFile *PatchFile
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// New file: diff --git a/file b/file
+		if strings.HasPrefix(line, "diff --git") {
+			if currentFile != nil {
+				files = append(files, *currentFile)
+			}
+			// Extract filename from "diff --git a/file b/file"
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				filename := strings.TrimPrefix(parts[3], "b/")
+				currentFile = &PatchFile{
+					Path:       filename,
+					LineRanges: make([]LineRange, 0),
+				}
+			}
+		}
+
+		// Hunk header: @@ -10,5 +12,7 @@
+		if strings.HasPrefix(line, "@@") && currentFile != nil {
+			// Parse to get new line range (+12,7 means start at 12, 7 lines)
+			re := regexp.MustCompile(`\+(\d+),(\d+)`)
+			matches := re.FindStringSubmatch(line)
+			if len(matches) >= 3 {
+				start := 0
+				count := 0
+				fmt.Sscanf(matches[1], "%d", &start)
+				fmt.Sscanf(matches[2], "%d", &count)
+				currentFile.LineRanges = append(currentFile.LineRanges, LineRange{
+					Start: start,
+					End:   start + count,
+				})
+			} else {
+				// Handle single line case: @@ -10 +12 @@
+				re := regexp.MustCompile(`\+(\d+)`)
+				matches := re.FindStringSubmatch(line)
+				if len(matches) >= 2 {
+					start := 0
+					fmt.Sscanf(matches[1], "%d", &start)
+					currentFile.LineRanges = append(currentFile.LineRanges, LineRange{
+						Start: start,
+						End:   start + 1,
+					})
+				}
+			}
+		}
+	}
+
+	// Don't forget last file
+	if currentFile != nil {
+		files = append(files, *currentFile)
+	}
+
+	return files, nil
+}
+
+// extractContextForAllFiles extracts current file content for all files in patch.
+func extractContextForAllFiles(patchFiles []PatchFile, projectPath string) map[string]string {
+	contexts := make(map[string]string)
+
+	for _, patchFile := range patchFiles {
+		filePath := filepath.Join(projectPath, patchFile.Path)
+
+		// Read file
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			logger.Info("Warning: could not read file", "file", patchFile.Path, "error", err)
+			continue
+		}
+
+		lines := strings.Split(string(content), "\n")
+
+		// Extract context around each changed line range
+		var contextLines []string
+		for _, lineRange := range patchFile.LineRanges {
+			// Get ±10 lines around the change
+			start := lineRange.Start - 10
+			if start < 0 {
+				start = 0
+			}
+			end := lineRange.End + 10
+			if end > len(lines) {
+				end = len(lines)
+			}
+
+			contextLines = append(contextLines, fmt.Sprintf("Lines %d-%d:", start+1, end))
+			for i := start; i < end; i++ {
+				contextLines = append(contextLines, lines[i])
+			}
+			contextLines = append(contextLines, "") // Blank line between ranges
+		}
+
+		contexts[patchFile.Path] = strings.Join(contextLines, "\n")
+	}
+
+	return contexts
+}
+
+// extractContextFromPristine extracts context from pristine file content (before git apply).
+// This is the CORRECT way to extract context because it shows the LLM the original state,
+// not the state after git apply has already modified some files.
+func extractContextFromPristine(patchFiles []PatchFile, pristineContent map[string]string) map[string]string {
+	contexts := make(map[string]string)
+
+	for _, patchFile := range patchFiles {
+		// Get pristine content for this file
+		content, ok := pristineContent[patchFile.Path]
+		if !ok {
+			logger.Info("Warning: no pristine content for file", "file", patchFile.Path)
+			continue
+		}
+
+		lines := strings.Split(content, "\n")
+
+		// Extract context around each changed line range
+		var contextLines []string
+		for _, lineRange := range patchFile.LineRanges {
+			// Get ±10 lines around the change
+			start := lineRange.Start - 10
+			if start < 0 {
+				start = 0
+			}
+			end := lineRange.End + 10
+			if end > len(lines) {
+				end = len(lines)
+			}
+
+			contextLines = append(contextLines, fmt.Sprintf("Lines %d-%d:", start+1, end))
+			for i := start; i < end; i++ {
+				contextLines = append(contextLines, lines[i])
+			}
+			contextLines = append(contextLines, "") // Blank line between ranges
+		}
+
+		contexts[patchFile.Path] = strings.Join(contextLines, "\n")
+	}
+
+	return contexts
 }

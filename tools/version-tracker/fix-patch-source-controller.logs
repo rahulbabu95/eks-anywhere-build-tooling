@@ -1,0 +1,114 @@
+und patch files       {"count": 1, "files": ["/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/patches/0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"]}
+2025-10-14T14:19:47.896-0700    V0      Processing patch        {"index": 1, "total": 1, "file": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:19:47.896-0700    V0      Fixing single patch     {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:19:47.896-0700    V0      Applying single patch with reject       {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:19:51.523-0700    V0      Repository checked out successfully     {"tag": "v1.7.2"}
+2025-10-14T14:19:51.558-0700    V0      Extracting pristine file content before applying patch
+2025-10-14T14:19:51.559-0700    V0      Captured pristine content       {"file": "go.mod", "size": 23146}
+2025-10-14T14:19:51.560-0700    V0      Captured pristine content       {"file": "go.sum", "size": 135762}
+2025-10-14T14:19:51.560-0700    V0      Extracted pristine content      {"files": 2}
+2025-10-14T14:19:51.560-0700    V0      Applying patch with git apply --reject  {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "repo_path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/source-controller", "patch_path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/patches/0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:19:51.585-0700    V0      Patch application failed with conflicts (expected)      {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "output": "Checking patch go.mod...\nerror: while searching for:\n// xref: https://github.com/opencontainers/go-digest/pull/66\nreplace github.com/opencontainers/go-digest => github.com/opencontainers/go-digest v1.0.1-0.20220411205349-bde1400a84be\n\nrequire (\n\tcloud.google.com/go/compute/metadata v0.8.0\n\tcloud.google.com/go/storage v1.56.1\n\nerror: patch failed: go.mod:8\nChecking patch go.sum...\nHunk #1 succeeded at 935 (offset 2 lines).\nApplying patch go.mod with 1 reject...\nRejected hunk #1.\nApplied patch go.sum cleanly.\n"}
+2025-10-14T14:19:51.618-0700    V0      Patch has conflicts     {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "rej_files": 1, "offset_files": 0}
+2025-10-14T14:19:51.618-0700    V0      Calculated patch complexity     {"score": 2, "threshold": 10}
+2025-10-14T14:19:51.618-0700    V0      Starting fix attempt for patch  {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "attempt": 1, "max_attempts": 3}
+2025-10-14T14:19:51.618-0700    V0      Extracting patch context        {"patch_file": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "rej_files": 1}
+2025-10-14T14:19:51.619-0700    V0      Parsed patch files      {"count": 2}
+2025-10-14T14:19:51.619-0700    V0      Using pristine content from before patch application    {"files": 2}
+2025-10-14T14:19:51.619-0700    V0      Extracted context from pristine files   {"count": 2}
+2025-10-14T14:19:51.619-0700    V0      Parsing rejection file  {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/source-controller/go.mod.rej", "index": 1}
+2025-10-14T14:19:51.620-0700    V0      Extracted expected vs actual comparison {"file": "go.mod", "expected_lines": 6, "actual_lines": 6, "differences": 2}
+2025-10-14T14:19:51.620-0700    V0      Context extraction complete     {"hunks": 1, "estimated_tokens": 3211}
+2025-10-14T14:19:51.620-0700    V0      Extracted patch context {"token_count": 3211, "hunks": 1}
+2025-10-14T14:19:51.620-0700    V0      Calling Bedrock API     {"model": "anthropic.claude-sonnet-4-5-20250929-v1:0", "attempt": 1}
+2025-10-14T14:19:51.622-0700    V0      Initializing Bedrock client     {"model": "anthropic.claude-sonnet-4-5-20250929-v1:0", "profile": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "region": "us-west-2"}
+2025-10-14T14:19:51.622-0700    V0      Initialized Bedrock client      {"model": "anthropic.claude-sonnet-4-5-20250929-v1:0", "profile": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "region": "us-west-2"}
+2025-10-14T14:19:51.622-0700    V0      Prompt built    {"length": 13358, "estimated_tokens": 3339}
+2025-10-14T14:19:51.623-0700    V0      Wrote prompt to debug file      {"file": "/tmp/llm-prompt-attempt-1.txt"}
+2025-10-14T14:20:06.179-0700    V0      Bedrock API call succeeded      {"attempt": 1}
+2025-10-14T14:20:06.179-0700    V0      Received response from Bedrock  {"response_length": 2085, "input_tokens": 6243, "output_tokens": 1139}
+2025-10-14T14:20:06.180-0700    V0      Wrote response to debug file    {"file": "/tmp/llm-response-attempt-1.txt"}
+2025-10-14T14:20:06.180-0700    V0      Patch format validation passed
+2025-10-14T14:20:06.180-0700    V0      Bedrock API call complete       {"input_cost": "$0.0187", "output_cost": "$0.0171", "total_cost": "$0.0358"}
+2025-10-14T14:20:06.180-0700    V0      LLM generated patch fix {"tokens_used": 7382, "cost": 0.035814000000000006, "patch_length": 2073}
+2025-10-14T14:20:06.180-0700    V0      Generated patch preview {"preview": "From f8d85ab21215f497ad9ab793510a648f06ae6990 Mon Sep 17 00:00:00 2001\nFrom: Abhay Krishna Arunachalam <arnchlm@amazon.com>\nDate: Wed, 7 Feb 2024 22:30:29 -0800\nSubject: [PATCH] Replace timestamp-authority and go-fuzz-headers revisions\n\n---\n go.mod | 2 ++\n go.sum | 4 ++--\n 2 files changed, 4 insertions(+), 2 deletions(-)\n\ndiff --git a/go.mod b/go.mod\nindex 21c15753..79d1b5c8 100644\n--- a/go.mod\n+++ b/go.mod\n@@ -8,6 +8,8 @@ replace github.com/fluxcd/source-controller/api => ./api\n // xref: https:...(truncated)"}
+2025-10-14T14:20:06.180-0700    V0      Applying LLM-generated patch    {"path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller"}
+2025-10-14T14:20:06.180-0700    V0      Saved patch to temporary file   {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/.llm-patch.tmp"}
+2025-10-14T14:20:06.181-0700    V0      Saved debug patch file  {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/.llm-patch-debug.txt"}
+2025-10-14T14:20:06.206-0700    V0      git apply failed        {"error": "exit status 1", "output": "error: patch failed: go.sum:933\nerror: go.sum: patch does not apply\n"}
+2025-10-14T14:20:06.207-0700    V0      Failed to apply patch fix       {"error": "git apply failed: exit status 1\nOutput: error: patch failed: go.sum:933\nerror: go.sum: patch does not apply\n", "attempt": 1}
+2025-10-14T14:20:06.207-0700    V0      Reverting patch changes {"path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller"}
+2025-10-14T14:20:06.292-0700    V0      Patch changes reverted successfully
+2025-10-14T14:20:06.292-0700    V0      Re-applying original patch with --reject to regenerate .rej files
+2025-10-14T14:20:06.292-0700    V0      Applying single patch with reject       {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:20:06.786-0700    V0      Repository checked out successfully     {"tag": "v1.7.2"}
+2025-10-14T14:20:06.816-0700    V0      Extracting pristine file content before applying patch
+2025-10-14T14:20:06.817-0700    V0      Captured pristine content       {"file": "go.mod", "size": 23146}
+2025-10-14T14:20:06.817-0700    V0      Captured pristine content       {"file": "go.sum", "size": 135762}
+2025-10-14T14:20:06.817-0700    V0      Extracted pristine content      {"files": 2}
+2025-10-14T14:20:06.817-0700    V0      Applying patch with git apply --reject  {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "repo_path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/source-controller", "patch_path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/patches/0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:20:06.833-0700    V0      Patch application failed with conflicts (expected)      {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "output": "Checking patch go.mod...\nerror: while searching for:\n// xref: https://github.com/opencontainers/go-digest/pull/66\nreplace github.com/opencontainers/go-digest => github.com/opencontainers/go-digest v1.0.1-0.20220411205349-bde1400a84be\n\nrequire (\n\tcloud.google.com/go/compute/metadata v0.8.0\n\tcloud.google.com/go/storage v1.56.1\n\nerror: patch failed: go.mod:8\nChecking patch go.sum...\nHunk #1 succeeded at 935 (offset 2 lines).\nApplying patch go.mod with 1 reject...\nRejected hunk #1.\nApplied patch go.sum cleanly.\n"}
+2025-10-14T14:20:06.847-0700    V0      Starting fix attempt for patch  {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "attempt": 2, "max_attempts": 3}
+2025-10-14T14:20:06.847-0700    V0      Extracting patch context        {"patch_file": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "rej_files": 1}
+2025-10-14T14:20:06.847-0700    V0      Parsed patch files      {"count": 2}
+2025-10-14T14:20:06.847-0700    V0      Using pristine content from before patch application    {"files": 2}
+2025-10-14T14:20:06.847-0700    V0      Extracted context from pristine files   {"count": 2}
+2025-10-14T14:20:06.848-0700    V0      Parsing rejection file  {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/source-controller/go.mod.rej", "index": 1}
+2025-10-14T14:20:06.849-0700    V0      Extracted expected vs actual comparison {"file": "go.mod", "expected_lines": 6, "actual_lines": 6, "differences": 2}
+2025-10-14T14:20:06.849-0700    V0      Context extraction complete     {"hunks": 1, "estimated_tokens": 3211}
+2025-10-14T14:20:06.849-0700    V0      Extracted patch context {"token_count": 3211, "hunks": 1}
+2025-10-14T14:20:06.849-0700    V0      Calling Bedrock API     {"model": "anthropic.claude-sonnet-4-5-20250929-v1:0", "attempt": 2}
+2025-10-14T14:20:06.851-0700    V0      Initialized Bedrock client      {"model": "anthropic.claude-sonnet-4-5-20250929-v1:0", "profile": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "region": "us-west-2"}
+2025-10-14T14:20:06.851-0700    V0      Prompt built    {"length": 13748, "estimated_tokens": 3437}
+2025-10-14T14:20:06.851-0700    V0      Wrote prompt to debug file      {"file": "/tmp/llm-prompt-attempt-2.txt"}
+2025-10-14T14:20:24.662-0700    V0      Bedrock API call succeeded      {"attempt": 1}
+2025-10-14T14:20:24.662-0700    V0      Received response from Bedrock  {"response_length": 2615, "input_tokens": 6347, "output_tokens": 1298}
+2025-10-14T14:20:24.662-0700    V0      Wrote response to debug file    {"file": "/tmp/llm-response-attempt-2.txt"}
+2025-10-14T14:20:24.662-0700    V0      Patch format validation passed
+2025-10-14T14:20:24.662-0700    V0      Bedrock API call complete       {"input_cost": "$0.0190", "output_cost": "$0.0195", "total_cost": "$0.0385"}
+2025-10-14T14:20:24.662-0700    V0      LLM generated patch fix {"tokens_used": 7645, "cost": 0.038511000000000004, "patch_length": 2073}
+2025-10-14T14:20:24.662-0700    V0      Generated patch preview {"preview": "From f8d85ab21215f497ad9ab793510a648f06ae6990 Mon Sep 17 00:00:00 2001\nFrom: Abhay Krishna Arunachalam <arnchlm@amazon.com>\nDate: Wed, 7 Feb 2024 22:30:29 -0800\nSubject: [PATCH] Replace timestamp-authority and go-fuzz-headers revisions\n\n---\n go.mod | 2 ++\n go.sum | 4 ++--\n 2 files changed, 4 insertions(+), 2 deletions(-)\n\ndiff --git a/go.mod b/go.mod\nindex 21c15753..79d1b5c8 100644\n--- a/go.mod\n+++ b/go.mod\n@@ -8,6 +8,8 @@ replace github.com/fluxcd/source-controller/api => ./api\n // xref: https:...(truncated)"}
+2025-10-14T14:20:24.662-0700    V0      Applying LLM-generated patch    {"path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller"}
+2025-10-14T14:20:24.663-0700    V0      Saved patch to temporary file   {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/.llm-patch.tmp"}
+2025-10-14T14:20:24.664-0700    V0      Saved debug patch file  {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/.llm-patch-debug.txt"}
+2025-10-14T14:20:24.700-0700    V0      git apply failed        {"error": "exit status 1", "output": "error: patch failed: go.sum:933\nerror: go.sum: patch does not apply\n"}
+2025-10-14T14:20:24.701-0700    V0      Failed to apply patch fix       {"error": "git apply failed: exit status 1\nOutput: error: patch failed: go.sum:933\nerror: go.sum: patch does not apply\n", "attempt": 2}
+2025-10-14T14:20:24.701-0700    V0      Reverting patch changes {"path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller"}
+2025-10-14T14:20:24.844-0700    V0      Patch changes reverted successfully
+2025-10-14T14:20:24.844-0700    V0      Re-applying original patch with --reject to regenerate .rej files
+2025-10-14T14:20:24.844-0700    V0      Applying single patch with reject       {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:20:25.384-0700    V0      Repository checked out successfully     {"tag": "v1.7.2"}
+2025-10-14T14:20:25.418-0700    V0      Extracting pristine file content before applying patch
+2025-10-14T14:20:25.419-0700    V0      Captured pristine content       {"file": "go.mod", "size": 23146}
+2025-10-14T14:20:25.420-0700    V0      Captured pristine content       {"file": "go.sum", "size": 135762}
+2025-10-14T14:20:25.420-0700    V0      Extracted pristine content      {"files": 2}
+2025-10-14T14:20:25.420-0700    V0      Applying patch with git apply --reject  {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "repo_path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/source-controller", "patch_path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/patches/0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch"}
+2025-10-14T14:20:25.439-0700    V0      Patch application failed with conflicts (expected)      {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "output": "Checking patch go.mod...\nerror: while searching for:\n// xref: https://github.com/opencontainers/go-digest/pull/66\nreplace github.com/opencontainers/go-digest => github.com/opencontainers/go-digest v1.0.1-0.20220411205349-bde1400a84be\n\nrequire (\n\tcloud.google.com/go/compute/metadata v0.8.0\n\tcloud.google.com/go/storage v1.56.1\n\nerror: patch failed: go.mod:8\nChecking patch go.sum...\nHunk #1 succeeded at 935 (offset 2 lines).\nApplying patch go.mod with 1 reject...\nRejected hunk #1.\nApplied patch go.sum cleanly.\n"}
+2025-10-14T14:20:25.457-0700    V0      Starting fix attempt for patch  {"patch": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "attempt": 3, "max_attempts": 3}
+2025-10-14T14:20:25.457-0700    V0      Extracting patch context        {"patch_file": "0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch", "rej_files": 1}
+2025-10-14T14:20:25.458-0700    V0      Parsed patch files      {"count": 2}
+2025-10-14T14:20:25.458-0700    V0      Using pristine content from before patch application    {"files": 2}
+2025-10-14T14:20:25.458-0700    V0      Extracted context from pristine files   {"count": 2}
+2025-10-14T14:20:25.458-0700    V0      Parsing rejection file  {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/source-controller/go.mod.rej", "index": 1}
+2025-10-14T14:20:25.459-0700    V0      Extracted expected vs actual comparison {"file": "go.mod", "expected_lines": 6, "actual_lines": 6, "differences": 2}
+2025-10-14T14:20:25.459-0700    V0      Context extraction complete     {"hunks": 1, "estimated_tokens": 3211}
+2025-10-14T14:20:25.459-0700    V0      Extracted patch context {"token_count": 3211, "hunks": 1}
+2025-10-14T14:20:25.459-0700    V0      Calling Bedrock API     {"model": "anthropic.claude-sonnet-4-5-20250929-v1:0", "attempt": 3}
+2025-10-14T14:20:25.461-0700    V0      Initialized Bedrock client      {"model": "anthropic.claude-sonnet-4-5-20250929-v1:0", "profile": "us.anthropic.claude-sonnet-4-5-20250929-v1:0", "region": "us-west-2"}
+2025-10-14T14:20:25.462-0700    V0      Prompt built    {"length": 13969, "estimated_tokens": 3492}
+2025-10-14T14:20:25.462-0700    V0      Wrote prompt to debug file      {"file": "/tmp/llm-prompt-attempt-3.txt"}
+2025-10-14T14:20:42.667-0700    V0      Bedrock API call succeeded      {"attempt": 1}
+2025-10-14T14:20:42.667-0700    V0      Received response from Bedrock  {"response_length": 3344, "input_tokens": 6396, "output_tokens": 1508}
+2025-10-14T14:20:42.668-0700    V0      Wrote response to debug file    {"file": "/tmp/llm-response-attempt-3.txt"}
+2025-10-14T14:20:42.668-0700    V0      Patch format validation passed
+2025-10-14T14:20:42.668-0700    V0      Bedrock API call complete       {"input_cost": "$0.0192", "output_cost": "$0.0226", "total_cost": "$0.0418"}
+2025-10-14T14:20:42.668-0700    V0      LLM generated patch fix {"tokens_used": 7904, "cost": 0.041808, "patch_length": 2073}
+2025-10-14T14:20:42.668-0700    V0      Generated patch preview {"preview": "From f8d85ab21215f497ad9ab793510a648f06ae6990 Mon Sep 17 00:00:00 2001\nFrom: Abhay Krishna Arunachalam <arnchlm@amazon.com>\nDate: Wed, 7 Feb 2024 22:30:29 -0800\nSubject: [PATCH] Replace timestamp-authority and go-fuzz-headers revisions\n\n---\n go.mod | 2 ++\n go.sum | 4 ++--\n 2 files changed, 4 insertions(+), 2 deletions(-)\n\ndiff --git a/go.mod b/go.mod\nindex 21c15753..79d1b5c8 100644\n--- a/go.mod\n+++ b/go.mod\n@@ -8,6 +8,8 @@ replace github.com/fluxcd/source-controller/api => ./api\n // xref: https:...(truncated)"}
+2025-10-14T14:20:42.668-0700    V0      Applying LLM-generated patch    {"path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller"}
+2025-10-14T14:20:42.669-0700    V0      Saved patch to temporary file   {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/.llm-patch.tmp"}
+2025-10-14T14:20:42.669-0700    V0      Saved debug patch file  {"file": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller/.llm-patch-debug.txt"}
+2025-10-14T14:20:42.747-0700    V0      git apply failed        {"error": "exit status 1", "output": "error: patch failed: go.sum:933\nerror: go.sum: patch does not apply\n"}
+2025-10-14T14:20:42.748-0700    V0      Failed to apply patch fix       {"error": "git apply failed: exit status 1\nOutput: error: patch failed: go.sum:933\nerror: go.sum: patch does not apply\n", "attempt": 3}
+2025-10-14T14:20:42.748-0700    V0      Reverting patch changes {"path": "/Users/rahulgab/Desktop/work/1-30/eks-anywhere-build-tooling/test/eks-anywhere-build-tooling/projects/fluxcd/source-controller"}
+2025-10-14T14:20:42.857-0700    V0      Patch changes reverted successfully
+2025/10/14 14:20:42 Error fixing patches: failed to fix patch 0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch: Failed to fix patch 0001-Replace-timestamp-authority-and-go-fuzz-headers-revi.patch after 3 attempts

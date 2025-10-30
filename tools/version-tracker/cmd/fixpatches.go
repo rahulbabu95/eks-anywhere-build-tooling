@@ -26,18 +26,18 @@ var fixPatchesCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(fixPatchesCmd)
-	
+
 	// Required flags
 	fixPatchesCmd.Flags().StringVar(&fixPatchesOptions.ProjectName, "project", "", "Specify the project name (e.g., aquasecurity/trivy)")
 	fixPatchesCmd.Flags().IntVar(&fixPatchesOptions.PRNumber, "pr", 0, "Specify the PR number")
-	
+
 	// Optional flags
 	fixPatchesCmd.Flags().BoolVar(&fixPatchesOptions.Auto, "auto", false, "Auto-detect project and PR from current git branch")
 	fixPatchesCmd.Flags().IntVar(&fixPatchesOptions.MaxAttempts, "max-attempts", 5, "Maximum number of fix attempts")
-	fixPatchesCmd.Flags().StringVar(&fixPatchesOptions.Model, "model", "anthropic.claude-sonnet-4-5-20250929-v1:0", "Bedrock model ID to use")
+	fixPatchesCmd.Flags().StringVar(&fixPatchesOptions.Model, "model", "anthropic.claude-sonnet-4-5-20250929-v1:0", "Bedrock model ID to use (Claude Sonnet 4.5 - 200K tokens/min approved)")
 	fixPatchesCmd.Flags().StringVar(&fixPatchesOptions.Region, "region", "us-west-2", "AWS region for Bedrock API")
 	fixPatchesCmd.Flags().IntVar(&fixPatchesOptions.ComplexityThreshold, "complexity-threshold", 10, "Skip patches exceeding this complexity score")
-	
+
 	// Mark required flags (unless --auto is used)
 	fixPatchesCmd.MarkFlagsRequiredTogether("project", "pr")
 }

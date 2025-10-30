@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -26,22 +29,114 @@ type BedrockResponse struct {
 	} `json:"usage"`
 }
 
+// convertToInferenceProfile converts a model ID to an inference profile ID if needed.
+// Claude Sonnet 4.5 and newer models require using inference profiles instead of direct model IDs.
+// Inference profiles provide cross-region routing and better availability.
+func convertToInferenceProfile(modelID string, region string) string {
+	// Map of model IDs that require inference profiles
+	// Format: model-id -> inference-profile-id
+	// Note: Inference profile IDs keep the full date-based version, just add "us." or "global." prefix
+	inferenceProfileMap := map[string]string{
+		"anthropic.claude-sonnet-4-5-20250929-v1:0": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"anthropic.claude-3-7-sonnet-20250219-v1:0": "us.anthropic.claude-3-7-sonnet-20250219-v1:0", // 1M tokens/min default!
+		"anthropic.claude-3-5-sonnet-20241022-v2:0": "us.anthropic.claude-3-5-sonnet-20241022-v2:0",
+		"anthropic.claude-sonnet-4-20250514-v1:0":   "us.anthropic.claude-sonnet-4-20250514-v1:0",
+		"anthropic.claude-opus-4-20250514-v1:0":     "us.anthropic.claude-opus-4-20250514-v1:0",
+		"anthropic.claude-opus-4-1-20250805-v1:0":   "us.anthropic.claude-opus-4-1-20250805-v1:0",
+		"anthropic.claude-3-5-haiku-20241022-v1:0":  "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+	}
+
+	// Check if this model needs an inference profile
+	if profileID, needsProfile := inferenceProfileMap[modelID]; needsProfile {
+		return profileID
+	}
+
+	// For older models (Claude 3.0, 3.5 v1) that work with direct model IDs, return as-is
+	return modelID
+}
+
+// Global client to reuse across calls (avoids recreating client on every retry)
+var globalBedrockClient *bedrockruntime.Client
+var globalModelOrProfile string
+var lastRequestTime time.Time
+var requestMutex sync.Mutex
+
+// initBedrockClient initializes the Bedrock client once and reuses it.
+func initBedrockClient(model string) (*bedrockruntime.Client, string, error) {
+	// Convert model to profile first to check if we need to reinitialize
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRetryMaxAttempts(1),
+	)
+	if err != nil {
+		return nil, "", fmt.Errorf("loading AWS config: %v", err)
+	}
+
+	modelOrProfile := convertToInferenceProfile(model, cfg.Region)
+
+	// Reuse client if model hasn't changed
+	if globalBedrockClient != nil && globalModelOrProfile == modelOrProfile {
+		return globalBedrockClient, globalModelOrProfile, nil
+	}
+
+	// Model changed or first initialization
+	logger.Info("Initializing Bedrock client", "model", model, "profile", modelOrProfile, "region", cfg.Region)
+
+	// Create new client
+	globalBedrockClient = bedrockruntime.NewFromConfig(cfg)
+	globalModelOrProfile = modelOrProfile
+
+	return globalBedrockClient, globalModelOrProfile, nil
+}
+
+// waitForRateLimit ensures we don't exceed Bedrock's rate limits.
+// Bedrock has a 4 requests/min limit for cross-region inference profiles.
+// This means we need at least 15 seconds between requests.
+func waitForRateLimit() {
+	requestMutex.Lock()
+	defer requestMutex.Unlock()
+
+	// Calculate time since last request
+	timeSinceLastRequest := time.Since(lastRequestTime)
+
+	// Bedrock limit: 4 requests/min = 15 seconds between requests
+	minTimeBetweenRequests := 15 * time.Second
+
+	if timeSinceLastRequest < minTimeBetweenRequests {
+		waitTime := minTimeBetweenRequests - timeSinceLastRequest
+		logger.Info("Rate limiting: waiting to respect Bedrock limits",
+			"wait_seconds", waitTime.Seconds(),
+			"time_since_last_request", timeSinceLastRequest.Seconds())
+		time.Sleep(waitTime)
+	}
+
+	// Update last request time
+	lastRequestTime = time.Now()
+}
+
 // CallBedrockForPatchFix invokes Bedrock with patch context to generate a fix.
 func CallBedrockForPatchFix(ctx *types.PatchContext, model string, attempt int) (*types.PatchFix, error) {
 	logger.Info("Calling Bedrock API", "model", model, "attempt", attempt)
 
-	// Load AWS config (uses default credential chain)
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	// Initialize or reuse existing client
+	client, modelOrProfile, err := initBedrockClient(model)
 	if err != nil {
-		return nil, fmt.Errorf("loading AWS config: %v", err)
+		return nil, err
 	}
 
-	client := bedrockruntime.NewFromConfig(cfg)
+	logger.Info("Initialized Bedrock client", "model", model, "profile", modelOrProfile, "region", "us-west-2")
 
 	// Build the prompt
 	prompt := BuildPrompt(ctx, attempt)
 
 	logger.Info("Prompt built", "length", len(prompt), "estimated_tokens", len(prompt)/4)
+
+	// Write prompt to debug file for inspection
+	promptDebugFile := fmt.Sprintf("/tmp/llm-prompt-attempt-%d.txt", attempt)
+	if err := os.WriteFile(promptDebugFile, []byte(prompt), 0644); err != nil {
+		logger.Info("Warning: failed to write prompt debug file", "error", err)
+	} else {
+		logger.Info("Wrote prompt to debug file", "file", promptDebugFile)
+	}
 
 	// Construct Bedrock request for Claude
 	systemPrompt := `You are an expert at resolving Git patch conflicts. Your task is to fix failed patch hunks by analyzing the original intent and the current code state.
@@ -54,9 +149,28 @@ Rules:
 5. Output ONLY the corrected patch in unified diff format with complete headers
 6. Do not add explanations or commentary`
 
-	requestBody := map[string]interface{}{
+	// Calculate max_tokens based on patch size
+	// Use patch size as proxy: larger patches need more output tokens
+	// Conservative estimate: patch size in chars / 3 * 2 (for output expansion)
+	patchSize := len(ctx.OriginalPatch)
+	maxTokens := (patchSize / 3) * 2
+
+	// Clamp to reasonable bounds
+	// With extended output feature enabled, we can use up to 128K tokens
+	if maxTokens < 8192 {
+		maxTokens = 8192 // Minimum for any patch
+	}
+	if maxTokens > 100000 {
+		maxTokens = 100000 // Stay well under 128K limit for safety
+	}
+
+	logger.Info("Calculated max_tokens for patch",
+		"patch_size_bytes", patchSize,
+		"max_tokens", maxTokens)
+
+	requestBody := map[string]any{
 		"anthropic_version": "bedrock-2023-05-31",
-		"max_tokens":        4096,
+		"max_tokens":        maxTokens, // Dynamic based on patch size
 		"messages": []map[string]string{
 			{
 				"role":    "user",
@@ -64,6 +178,9 @@ Rules:
 			},
 		},
 		"system": systemPrompt,
+		// Enable extended output feature for Claude models
+		// This allows up to 128K output tokens instead of the default 8K limit
+		"anthropic_beta": []string{"output-128k-2025-02-19"},
 	}
 
 	requestBodyBytes, err := json.Marshal(requestBody)
@@ -71,23 +188,50 @@ Rules:
 		return nil, fmt.Errorf("marshaling request body: %v", err)
 	}
 
-	// Invoke model with retry logic
+	// Invoke model with retry logic and exponential backoff
+	// Bedrock rate limits for Claude Sonnet 4.5 (cross-region inference profile):
+	// - Requests per minute: 4 (L-4A6BFAB1)
+	// - Tokens per minute: 4,000 (L-F4DDD3EB)
+	// - Max tokens per day: 144M (L-381AD9EE)
+	//
+	// With 4 requests/min, we need at least 15 seconds between requests (60s / 4 = 15s)
+	// To be safe and account for clock skew, we use 20s as the minimum wait time
 	var response *bedrockruntime.InvokeModelOutput
-	maxRetries := 3
+	maxRetries := 5 // Give multiple chances with proper backoff
+
 	for i := 0; i < maxRetries; i++ {
+		// Log the attempt
+		if i > 0 {
+			logger.Info("Retrying Bedrock API call", "attempt", i+1, "max_retries", maxRetries)
+		}
+
+		// CRITICAL: Wait for rate limit before making request
+		// This ensures we never exceed 4 requests/min
+		waitForRateLimit()
+
 		response, err = client.InvokeModel(context.Background(), &bedrockruntime.InvokeModelInput{
-			ModelId:     aws.String(model),
+			ModelId:     aws.String(modelOrProfile),
 			ContentType: aws.String("application/json"),
 			Body:        requestBodyBytes,
 		})
 
 		if err == nil {
+			logger.Info("Bedrock API call succeeded", "attempt", i+1)
 			break
 		}
 
-		logger.Info("Bedrock API call failed, retrying", "attempt", i+1, "error", err)
+		// Log the error
+		logger.Info("Bedrock API call failed", "attempt", i+1, "max_retries", maxRetries, "error", err.Error())
+
 		if i < maxRetries-1 {
-			time.Sleep(time.Second * time.Duration(i+1)) // Exponential backoff
+			// Exponential backoff starting at 20s to respect 4 requests/min limit
+			// Wait times: 20s, 40s, 80s, 160s
+			// This ensures we stay well under the 4 requests/min limit (15s minimum)
+			waitTime := time.Duration(20*(1<<uint(i))) * time.Second
+			logger.Info("Waiting before retry to respect rate limits",
+				"wait_seconds", waitTime.Seconds(),
+				"rate_limit", "4 requests/min for Claude Sonnet 4.5")
+			time.Sleep(waitTime)
 		}
 	}
 
@@ -110,6 +254,23 @@ Rules:
 		"response_length", len(responseText),
 		"input_tokens", result.Usage.InputTokens,
 		"output_tokens", result.Usage.OutputTokens)
+
+	// Write response to debug file for inspection
+	responseDebugFile := fmt.Sprintf("/tmp/llm-response-attempt-%d.txt", attempt)
+	if err := os.WriteFile(responseDebugFile, []byte(responseText), 0644); err != nil {
+		logger.Info("Warning: failed to write response debug file", "error", err)
+	} else {
+		logger.Info("Wrote response to debug file", "file", responseDebugFile)
+	}
+
+	// Check if response was truncated
+	if result.Usage.OutputTokens >= maxTokens {
+		logger.Info("Response truncated: hit max_tokens limit",
+			"output_tokens", result.Usage.OutputTokens,
+			"max_tokens", maxTokens)
+		return nil, fmt.Errorf("LLM response truncated at %d tokens (limit: %d) - patch output too large, consider reducing input context",
+			result.Usage.OutputTokens, maxTokens)
+	}
 
 	// Extract patch from response
 	patch := extractPatchFromResponse(responseText)
@@ -230,16 +391,52 @@ func BuildPrompt(ctx *types.PatchContext, attempt int) string {
 		}
 		prompt.WriteString("```\n\n")
 
-		// Current state of the file
-		prompt.WriteString(fmt.Sprintf("### Current state of the file (around line %d):\n", hunk.LineNumber))
+		// Expected vs Actual comparison (NEW)
+		if len(hunk.ExpectedContext) > 0 || len(hunk.ActualContext) > 0 {
+			prompt.WriteString("### Expected vs Actual File State:\n\n")
+
+			prompt.WriteString("**What the original patch expected (from OLD version):**\n")
+			prompt.WriteString("```\n")
+			if len(hunk.ExpectedContext) > 0 {
+				for _, line := range hunk.ExpectedContext {
+					prompt.WriteString(line + "\n")
+				}
+			} else {
+				prompt.WriteString("(No expected context extracted)\n")
+			}
+			prompt.WriteString("```\n\n")
+
+			prompt.WriteString("**What's actually in the file now (CURRENT version):**\n")
+			prompt.WriteString("```\n")
+			if len(hunk.ActualContext) > 0 {
+				for _, line := range hunk.ActualContext {
+					prompt.WriteString(line + "\n")
+				}
+			} else {
+				prompt.WriteString("(No actual context extracted)\n")
+			}
+			prompt.WriteString("```\n\n")
+
+			if len(hunk.Differences) > 0 {
+				prompt.WriteString("**Differences:**\n")
+				for _, diff := range hunk.Differences {
+					prompt.WriteString(fmt.Sprintf("- %s\n", diff))
+				}
+				prompt.WriteString("\n")
+			}
+		}
+
+		// Current state of the file (broader context)
+		prompt.WriteString(fmt.Sprintf("### Current file content (around line %d):\n", hunk.LineNumber))
 		prompt.WriteString("```\n")
 		prompt.WriteString(hunk.Context)
 		prompt.WriteString("\n```\n\n")
 
-		// Why it failed
-		prompt.WriteString("### Why it failed:\n")
-		prompt.WriteString("The patch does not apply cleanly to the current file state. ")
-		prompt.WriteString("The code structure or content has changed in the new version.\n\n")
+		// Instructions for this file
+		prompt.WriteString("### Instructions:\n")
+		prompt.WriteString("- Use the ACTUAL CURRENT content shown above as your starting point\n")
+		prompt.WriteString("- Match the exact formatting and whitespace from the current file\n")
+		prompt.WriteString("- Use current line numbers, not the original patch's line numbers\n\n")
 
 		// Add separator between hunks
 		if i < len(ctx.FailedHunks)-1 {
@@ -247,35 +444,167 @@ func BuildPrompt(ctx *types.PatchContext, attempt int) string {
 		}
 	}
 
-	// Previous attempts (if any)
-	if attempt > 1 && len(ctx.PreviousAttempts) > 0 {
-		prompt.WriteString(fmt.Sprintf("## Previous Attempt #%d\n", attempt-1))
-		prompt.WriteString("You tried this fix, but it failed validation:\n")
-		prompt.WriteString("```diff\n")
-		prompt.WriteString(ctx.PreviousAttempts[len(ctx.PreviousAttempts)-1])
-		prompt.WriteString("\n```\n\n")
+	// Show context for ALL files in patch (NEW: Approach 2)
+	if len(ctx.AllFileContexts) > 0 {
+		prompt.WriteString("## Current File States\n\n")
+		prompt.WriteString("Here is the current content of all files being modified:\n\n")
 
-		if ctx.BuildError != "" {
-			prompt.WriteString("Build error:\n")
-			prompt.WriteString("```\n")
-			// Limit build error to last 500 lines
-			errorLines := strings.Split(ctx.BuildError, "\n")
-			if len(errorLines) > 500 {
-				prompt.WriteString("...(truncated)...\n")
-				errorLines = errorLines[len(errorLines)-500:]
+		for filename, context := range ctx.AllFileContexts {
+			prompt.WriteString(fmt.Sprintf("### %s\n\n", filename))
+
+			// Check if this file has a .rej (failed)
+			hasFailed := false
+			for _, hunk := range ctx.FailedHunks {
+				if strings.Contains(hunk.FilePath, filename) {
+					hasFailed = true
+					break
+				}
 			}
-			prompt.WriteString(strings.Join(errorLines, "\n"))
+
+			// Check if this file has offset
+			hasOffset := false
+			offsetAmount := 0
+			if ctx.ApplicationResult != nil {
+				if offset, ok := ctx.ApplicationResult.OffsetFiles[filename]; ok {
+					hasOffset = true
+					offsetAmount = offset
+				}
+			}
+
+			// Show status
+			if hasFailed {
+				prompt.WriteString("**Status**: ❌ FAILED (see detailed context above)\n\n")
+				prompt.WriteString("**Action Required**: Fix this file to resolve the conflict\n\n")
+			} else if hasOffset {
+				prompt.WriteString(fmt.Sprintf("**Status**: ⚠️ APPLIED WITH OFFSET (+%d lines)\n\n", offsetAmount))
+				prompt.WriteString("**IMPORTANT**: This file applied successfully but at different line numbers than expected.\n")
+				prompt.WriteString("You MUST include this file in your fixed patch with updated line numbers.\n")
+				prompt.WriteString(fmt.Sprintf("The patch expected changes at certain lines, but they were found %d lines later.\n\n", offsetAmount))
+			} else {
+				prompt.WriteString("**Status**: ✅ APPLIED CLEANLY\n\n")
+				prompt.WriteString("**Action Required**: Include this file in your fixed patch (no changes needed to line numbers)\n\n")
+			}
+
+			// Show pristine content (BEFORE git apply modified it)
+			prompt.WriteString("**Original content (BEFORE patch application):**\n")
+			prompt.WriteString("```\n")
+			prompt.WriteString(context)
 			prompt.WriteString("\n```\n\n")
 		}
 	}
 
+	// Original patch for reference (with warnings about what needs fixing)
+	// NOTE: We put this BEFORE the error so the error is closer to the task
+	prompt.WriteString("## Original Patch (For Reference)\n\n")
+
+	// Identify which files failed and which succeeded with offset
+	failedFiles := make(map[string]bool)
+	for _, hunk := range ctx.FailedHunks {
+		failedFiles[filepath.Base(hunk.FilePath)] = true
+	}
+
+	// Show status of each file
+	if ctx.ApplicationResult != nil {
+		prompt.WriteString("**Patch Application Status:**\n")
+
+		// List failed files
+		if len(failedFiles) > 0 {
+			failedList := make([]string, 0, len(failedFiles))
+			for file := range failedFiles {
+				failedList = append(failedList, file)
+			}
+			prompt.WriteString(fmt.Sprintf("- ❌ FAILED (needs fixing): %s\n", strings.Join(failedList, ", ")))
+		}
+
+		// List offset files
+		if len(ctx.ApplicationResult.OffsetFiles) > 0 {
+			for file, offset := range ctx.ApplicationResult.OffsetFiles {
+				prompt.WriteString(fmt.Sprintf("- ⚠️  APPLIED WITH OFFSET (needs line number update): %s (offset: %d lines)\n", file, offset))
+			}
+		}
+		prompt.WriteString("\n")
+	}
+
+	// For attempt 1: include full original patch
+	// For attempt 2+: include only failed file portions to save tokens
+	if attempt == 1 {
+		prompt.WriteString("**Full Original Patch:**\n")
+		prompt.WriteString("```diff\n")
+		prompt.WriteString(ctx.OriginalPatch)
+		prompt.WriteString("\n```\n\n")
+	} else {
+		// Extract only the failed files from the original patch
+		prompt.WriteString("**Original Patch (Failed Files Only):**\n")
+		prompt.WriteString("```diff\n")
+
+		// Get list of failed files
+		failedFileNames := make(map[string]bool)
+		for _, hunk := range ctx.FailedHunks {
+			fileName := filepath.Base(hunk.FilePath)
+			failedFileNames[fileName] = true
+		}
+
+		// Extract diffs for failed files only
+		if len(failedFileNames) > 0 {
+			failedDiffs := extractFileDiffsFromPatch(ctx.OriginalPatch, failedFileNames)
+			if failedDiffs != "" {
+				prompt.WriteString(failedDiffs)
+			} else {
+				// Fallback: include full patch if extraction fails
+				prompt.WriteString(ctx.OriginalPatch)
+			}
+		}
+
+		prompt.WriteString("\n```\n\n")
+
+		// Count total files vs failed files
+		totalFiles := strings.Count(ctx.OriginalPatch, "diff --git")
+		prompt.WriteString(fmt.Sprintf("ℹ️  Note: Showing only %d failed file(s). %d other files applied successfully.\n\n",
+			len(failedFileNames), totalFiles-len(failedFileNames)))
+	}
+
+	prompt.WriteString("⚠️  **Important**: This patch was created against an OLD version of the code.\n")
+	prompt.WriteString("Some files may have changed (version bumps, line shifts, etc.).\n")
+	prompt.WriteString("Use the 'Expected vs Actual' sections above to see what changed.\n\n")
+
+	// CRITICAL: Put error information HERE, right before the task
+	// This ensures the LLM sees the error immediately before generating the fix
+	if attempt > 1 && ctx.BuildError != "" {
+		prompt.WriteString("---\n\n")
+		prompt.WriteString(fmt.Sprintf("# 🚨 CRITICAL: Attempt #%d Failed With This Error\n\n", attempt-1))
+
+		prompt.WriteString("**Your previous patch failed to apply with this error:**\n")
+		prompt.WriteString("```\n")
+		// Limit build error to last 500 lines
+		errorLines := strings.Split(ctx.BuildError, "\n")
+		if len(errorLines) > 500 {
+			prompt.WriteString("...(truncated)...\n")
+			errorLines = errorLines[len(errorLines)-500:]
+		}
+		prompt.WriteString(strings.Join(errorLines, "\n"))
+		prompt.WriteString("\n```\n\n")
+
+		prompt.WriteString("**🎯 Your primary goal:**\n")
+		prompt.WriteString("Fix the SPECIFIC error shown above. The error message tells you:\n")
+		prompt.WriteString("- Which line number failed (e.g., 'corrupt patch at line 276')\n")
+		prompt.WriteString("- What type of error occurred (corrupt patch, missing header, etc.)\n")
+		prompt.WriteString("- This is the MOST IMPORTANT context for your fix\n\n")
+
+		prompt.WriteString("**Common causes of these errors:**\n")
+		prompt.WriteString("- 'corrupt patch at line X': Patch format is malformed (missing newlines, truncated content)\n")
+		prompt.WriteString("- 'patch fragment without header': Missing 'diff --git' or file headers\n")
+		prompt.WriteString("- 'does not apply': Line numbers or content don't match current file\n\n")
+
+		prompt.WriteString("---\n\n")
+	}
+
 	// Reflection for later attempts
 	if attempt >= 3 {
-		prompt.WriteString("## Reflection Required\n")
-		prompt.WriteString("Before providing the fix, first explain:\n")
-		prompt.WriteString("1. Why the previous attempts failed\n")
-		prompt.WriteString("2. What needs to change in this attempt\n")
-		prompt.WriteString("3. The specific lines that need modification\n\n")
+		prompt.WriteString(fmt.Sprintf("## 🤔 Reflection Required (Attempt #%d)\n\n", attempt))
+		prompt.WriteString(fmt.Sprintf("This is your %s attempt. Before providing the fix, first explain:\n", ordinal(attempt)))
+		prompt.WriteString("1. What SPECIFIC error occurred (see the error above)\n")
+		prompt.WriteString("2. Why that error happened (patch format issue? line number mismatch?)\n")
+		prompt.WriteString("3. What SPECIFIC changes you'll make to fix it\n\n")
 		prompt.WriteString("Then provide the corrected patch.\n\n")
 	}
 
@@ -283,11 +612,38 @@ func BuildPrompt(ctx *types.PatchContext, attempt int) string {
 	prompt.WriteString("## Task\n")
 	prompt.WriteString("Generate a corrected patch that:\n")
 	prompt.WriteString("1. Preserves the exact metadata (From, Date, Subject) from the original patch\n")
-	prompt.WriteString("2. Achieves the same intent as the original patch\n")
-	prompt.WriteString("3. Applies cleanly to the current file state\n")
-	prompt.WriteString("4. Will compile successfully\n\n")
+	prompt.WriteString("2. Includes ALL files from the original patch (both failed and offset files)\n")
+	prompt.WriteString("3. For FAILED files: Fix them using the 'Expected vs Actual' context above\n")
+	prompt.WriteString("4. For OFFSET files: Update line numbers to match current file state\n")
+	prompt.WriteString("5. Uses RELATIVE file paths NOT absolute paths\n")
+	prompt.WriteString("6. Will compile successfully\n\n")
 
-	prompt.WriteString("Output the corrected patch in unified diff format with complete headers:\n")
+	prompt.WriteString("## How to Generate the Fix\n\n")
+
+	prompt.WriteString("**Step 1: Understand the Intent**\n")
+	prompt.WriteString("Look at 'What the patch tried to do' to understand the semantic change being made.\n\n")
+
+	prompt.WriteString("**Step 2: Use Current File State**\n")
+	prompt.WriteString("The 'Expected vs Actual' sections show you:\n")
+	prompt.WriteString("- What the original patch expected (OLD version)\n")
+	prompt.WriteString("- What's actually in the file NOW (NEW version)\n")
+	prompt.WriteString("- The specific differences between them\n\n")
+	prompt.WriteString("You MUST use the ACTUAL CURRENT content as your starting point, not the expected content.\n\n")
+
+	prompt.WriteString("**Step 3: Find the Semantic Location**\n")
+	prompt.WriteString("Find where in the CURRENT file the change should be applied:\n")
+	prompt.WriteString("- Use the 'Current file content' section to see the broader context\n")
+	prompt.WriteString("- Match based on semantic meaning (package names, function names, etc.)\n")
+	prompt.WriteString("- Don't rely on line numbers from the original patch - they may have shifted\n\n")
+
+	prompt.WriteString("**Step 4: Generate the Patch**\n")
+	prompt.WriteString("Create a patch that:\n")
+	prompt.WriteString("- Uses context lines from the CURRENT file (complete, not truncated)\n")
+	prompt.WriteString("- Uses CURRENT line numbers\n")
+	prompt.WriteString("- Makes the SAME semantic change as the original patch intended\n")
+	prompt.WriteString("- Preserves exact formatting and whitespace from the current file\n\n")
+
+	prompt.WriteString("Output format (unified diff with complete headers):\n")
 	prompt.WriteString("```\n")
 	prompt.WriteString("From <commit-hash> Mon Sep 17 00:00:00 2001\n")
 	if ctx.PatchAuthor != "" {
@@ -300,7 +656,11 @@ func BuildPrompt(ctx *types.PatchContext, attempt int) string {
 		prompt.WriteString(fmt.Sprintf("Subject: %s\n", ctx.PatchSubject))
 	}
 	prompt.WriteString("\n---\n")
-	prompt.WriteString("<diff content>\n")
+	prompt.WriteString(" file1.ext | X +/-\n")
+	prompt.WriteString(" file2.ext | Y +/-\n")
+	prompt.WriteString(" N files changed, X insertions(+), Y deletions(-)\n\n")
+	prompt.WriteString("diff --git a/file1.ext b/file1.ext\n")
+	prompt.WriteString("...\n")
 	prompt.WriteString("```\n")
 
 	return prompt.String()
@@ -353,4 +713,82 @@ func validatePatchFormat(patch string, ctx *types.PatchContext) error {
 
 	logger.Info("Patch format validation passed")
 	return nil
+}
+
+// ordinal returns the ordinal string for a number (1st, 2nd, 3rd, etc.)
+func ordinal(n int) string {
+	suffix := "th"
+	switch n % 10 {
+	case 1:
+		if n%100 != 11 {
+			suffix = "st"
+		}
+	case 2:
+		if n%100 != 12 {
+			suffix = "nd"
+		}
+	case 3:
+		if n%100 != 13 {
+			suffix = "rd"
+		}
+	}
+	return fmt.Sprintf("%d%s", n, suffix)
+}
+
+// extractFileDiffsFromPatch extracts only the diffs for specified files from a patch.
+// This is used to reduce token usage in retry attempts by only including failed files.
+func extractFileDiffsFromPatch(patch string, fileNames map[string]bool) string {
+	if len(fileNames) == 0 {
+		return ""
+	}
+
+	var result strings.Builder
+	lines := strings.Split(patch, "\n")
+
+	inTargetFile := false
+	currentFileName := ""
+	var currentFileDiff strings.Builder
+
+	for i, line := range lines {
+		// Check for new file diff
+		if strings.HasPrefix(line, "diff --git") {
+			// Save previous file if it was a target
+			if inTargetFile && currentFileDiff.Len() > 0 {
+				result.WriteString(currentFileDiff.String())
+				result.WriteString("\n")
+			}
+
+			// Reset for new file
+			currentFileDiff.Reset()
+			inTargetFile = false
+
+			// Extract filename from "diff --git a/path/to/file.go b/path/to/file.go"
+			parts := strings.Fields(line)
+			if len(parts) >= 4 {
+				// Get the b/ path (destination)
+				filePath := strings.TrimPrefix(parts[3], "b/")
+				currentFileName = filepath.Base(filePath)
+
+				// Check if this is a file we want
+				if fileNames[currentFileName] {
+					inTargetFile = true
+					currentFileDiff.WriteString(line)
+					currentFileDiff.WriteString("\n")
+				}
+			}
+		} else if inTargetFile {
+			// Include all lines for target files
+			currentFileDiff.WriteString(line)
+			if i < len(lines)-1 {
+				currentFileDiff.WriteString("\n")
+			}
+		}
+	}
+
+	// Don't forget the last file
+	if inTargetFile && currentFileDiff.Len() > 0 {
+		result.WriteString(currentFileDiff.String())
+	}
+
+	return result.String()
 }
