@@ -6,12 +6,13 @@ Subject: [PATCH 6/6] fix: Replace bmclib with fork for iDRAC10 gofish
 
 Point bmclib to a fork (github.com/rahulbabu95/bmclib) that includes
 gofish v0.20.1+ with iDRAC10 compatibility fixes from gofish PRs #510
-and #511, plus the VirtualMedia System path fallback from bmclib #433.
-The fork adapts bmclib to the new gofish API (schemas package
-restructure), mirroring bmc-toolbox/bmclib#432.
+and #511, the VirtualMedia System path fallback from bmclib #433, and
+the SetVirtualMedia slot fallback from bmclib #434. The fork adapts
+bmclib to the new gofish API (schemas package restructure), mirroring
+bmc-toolbox/bmclib#432.
 
-This is a temporary patch until upstream bmclib merges PR #432 and
-tinkerbell bumps to a version that includes it.
+This is a temporary patch until upstream bmclib merges these PRs and
+tinkerbell bumps to a version that includes them.
 
 Signed-off-by: Rahul Ganesh <rahulgab@amazon.com>
 ---
@@ -36,7 +37,7 @@ index cd60a943..12a6409f 100644
  )
  
  replace (
-+	github.com/bmc-toolbox/bmclib/v2 => github.com/rahulbabu95/bmclib/v2 v2.0.0-20260305223154-9e7e55bda2fe
++	github.com/bmc-toolbox/bmclib/v2 => github.com/rahulbabu95/bmclib/v2 v2.0.0-20260310204344-f574c9d668ec
  	github.com/tinkerbell/tinkerbell/api => ./api
  	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc => go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0
  	k8s.io/api => k8s.io/api v0.34.3
@@ -57,8 +58,8 @@ index 56be1b85..2498c5a8 100644
  github.com/quic-go/qpack v0.6.0/go.mod h1:lUpLKChi8njB4ty2bFLX2x4gzDqXwUpaO1DP9qMDZII=
  github.com/quic-go/quic-go v0.57.0 h1:AsSSrrMs4qI/hLrKlTH/TGQeTMY0ib1pAOX7vA3AdqE=
  github.com/quic-go/quic-go v0.57.0/go.mod h1:ly4QBAjHA2VhdnxhojRsCUOeJwKYg+taDlos92xb1+s=
-+github.com/rahulbabu95/bmclib/v2 v2.0.0-20260305223154-9e7e55bda2fe h1:BncNiKUfitjTVnxh9uJbm/PaCLJp9SVJIQGtf8BWJxk=
-+github.com/rahulbabu95/bmclib/v2 v2.0.0-20260305223154-9e7e55bda2fe/go.mod h1:3yBq8jDHT1OVa/iiJ1GKLttDlJB0dzF9Z5IH2hbaKHU=
++github.com/rahulbabu95/bmclib/v2 v2.0.0-20260310204344-f574c9d668ec h1:aCT6DcSvJrJ6POUV7tlmbPiMUyoYCpU+CaIJpp9/D80=
++github.com/rahulbabu95/bmclib/v2 v2.0.0-20260310204344-f574c9d668ec/go.mod h1:3yBq8jDHT1OVa/iiJ1GKLttDlJB0dzF9Z5IH2hbaKHU=
  github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
  github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
  github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
