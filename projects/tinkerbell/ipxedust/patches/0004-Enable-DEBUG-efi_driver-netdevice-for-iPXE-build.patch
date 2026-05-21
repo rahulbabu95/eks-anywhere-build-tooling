@@ -1,0 +1,27 @@
+From 5690886deda03feccbbca393cfb9ead6b939e76b Mon Sep 17 00:00:00 2001
+From: Prow Bot <prow@amazonaws.com>
+Date: Wed, 20 May 2026 08:41:43 -0700
+Subject: [PATCH] Enable DEBUG=efi_driver,netdevice for iPXE build
+
+---
+ binary/script/build_ipxe.sh | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/binary/script/build_ipxe.sh b/binary/script/build_ipxe.sh
+index c7feeea..0024e8d 100755
+--- a/binary/script/build_ipxe.sh
++++ b/binary/script/build_ipxe.sh
+@@ -20,9 +20,9 @@ function build_ipxe() {
+     local version_override="VERSION_MAJOR=1 VERSION_MINOR=21 VERSION_PATCH=1"
+ 
+     if [ -z "${env_opts}" ]; then
+-        make -C "${ipxe_dir}"/src ${version_override} EXTRAVERSION="+ (${ipxe_commit})" EMBED="${embed_path}" "${ipxe_bin}"
++        make -C "${ipxe_dir}"/src DEBUG=efi_driver,netdevice ${version_override} EXTRAVERSION="+ (${ipxe_commit})" EMBED="${embed_path}" "${ipxe_bin}"
+     else
+-        make -C "${ipxe_dir}"/src "${env_opts}" ${version_override} EXTRAVERSION="+ (${ipxe_commit})" EMBED="${embed_path}" "${ipxe_bin}"
++        make -C "${ipxe_dir}"/src "${env_opts}" DEBUG=efi_driver,netdevice ${version_override} EXTRAVERSION="+ (${ipxe_commit})" EMBED="${embed_path}" "${ipxe_bin}"
+     fi
+ }
+ 
+-- 
+2.46.0
