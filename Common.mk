@@ -301,6 +301,10 @@ BINARY_TARGETS_FROM_FILES_PLATFORMS=$(foreach platform, $(2), $(foreach target, 
 # $2 - repo
 GET_CLONE_URL=$(shell source $(BUILD_LIB)/common.sh && build::common::get_clone_url $(1) $(2) $(AWS_REGION) $(CODEBUILD_CI))
 
+# True when GIT_TAG pins a raw commit SHA rather than a tag or branch, which selects
+# the clone path used below.
+GIT_TAG_IS_COMMIT_SHA=$(shell printf '%s' '$(GIT_TAG)' | grep -qE '^[0-9a-f]{40}$$' && echo true || echo false)
+
 # $1 - binary file name
 # $2 - go mod path for binary
 # returns full target path for given binary + go mod path
@@ -594,7 +598,17 @@ ifneq ($(REPO_SPARSE_CHECKOUT),)
 	source $(BUILD_LIB)/common.sh && retry git clone --quiet --depth 1 --filter=blob:none --sparse -b $(GIT_TAG) $(CLONE_URL) $(REPO)
 	git -C $(REPO) sparse-checkout set $(REPO_SPARSE_CHECKOUT) --cone --skip-checks
 else
-	source $(BUILD_LIB)/common.sh && retry git clone --quiet $(CLONE_URL) $(REPO)
+# A shallow clone needs the wanted revision named up front. `git clone -b` takes a tag
+# or branch but rejects a raw commit SHA, so SHA-pinned projects fetch the commit
+# directly instead. Both leave the pinned revision present locally, which is what
+# wait_for_tag.sh below checks for.
+ifeq ($(GIT_TAG_IS_COMMIT_SHA),true)
+	git init --quiet $(REPO)
+	git -C $(REPO) remote add origin $(CLONE_URL)
+	source $(BUILD_LIB)/common.sh && retry git -C $(REPO) fetch --quiet --depth 1 origin $(GIT_TAG)
+else
+	source $(BUILD_LIB)/common.sh && retry git clone --quiet --depth 1 -b $(GIT_TAG) $(CLONE_URL) $(REPO)
+endif
 endif
 	@echo -e $(call TARGET_END_LOG)
 endif
