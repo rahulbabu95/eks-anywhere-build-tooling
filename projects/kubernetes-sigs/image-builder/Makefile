@@ -127,7 +127,12 @@ BOTTLEROCKET_AMI_RELEASE_VERSION=$(and $(RELEASE_BRANCH),$(shell yq e ".$(RELEAS
 BOTTLEROCKET_OVA_RELEASE_VERSION=$(and $(RELEASE_BRANCH),$(shell yq e ".$(RELEASE_BRANCH).ova-release-version" $(MAKE_ROOT)/BOTTLEROCKET_RELEASES))
 BOTTLEROCKET_RAW_RELEASE_VERSION=$(and $(RELEASE_BRANCH),$(shell yq e ".$(RELEASE_BRANCH).raw-release-version" $(MAKE_ROOT)/BOTTLEROCKET_RELEASES))
 
-NOT_SUPPORTED_RELEASE_BRANCH_CONFIGURATION=$(if $(or $(filter-out bottlerocket,$(IMAGE_OS)),$(filter-out null,$(BOTTLEROCKET_$(call TO_UPPER,$(IMAGE_FORMAT))_RELEASE_VERSION))),false,true)
+# The CloudStack provider is deprecated, so its images are no longer built on every
+# EKS-D bump. check-for-supported-release-branch exits non-zero for these formats,
+# which short-circuits the buildspec to a no-op. release-cloudstack-% and
+# local-build-cloudstack-% are untouched and still work for manual builds.
+DEPRECATED_IMAGE_FORMATS=cloudstack
+NOT_SUPPORTED_RELEASE_BRANCH_CONFIGURATION=$(if $(filter $(IMAGE_FORMAT),$(DEPRECATED_IMAGE_FORMATS)),true,$(if $(or $(filter-out bottlerocket,$(IMAGE_OS)),$(filter-out null,$(BOTTLEROCKET_$(call TO_UPPER,$(IMAGE_FORMAT))_RELEASE_VERSION))),false,true))
 SKIPPED_K8S_VERSIONS=$(shell yq e 'with_entries(select(.value.$(IMAGE_FORMAT)-release-version == null)) | keys | join(" ")' BOTTLEROCKET_RELEASES)
 
 IMAGE_OS?=ubuntu
